@@ -188,8 +188,16 @@ describe("agentLoop soft tool requirement", () => {
 		expect(mock.calls[0]?.options?.toolChoice).toBeUndefined();
 		expect(mock.calls[1]?.options?.toolChoice).toEqual({ type: "tool", name: "write" });
 		// The skipped write call still produced a paired tool result (API pairing).
-		const skipped = messages.find(m => m.role === "toolResult" && m.toolCallId === "w1");
+		const skipped = messages.find(
+			(m): m is Extract<AgentMessage, { role: "toolResult" }> => m.role === "toolResult" && m.toolCallId === "w1",
+		);
 		expect(skipped).toBeDefined();
+		expect(skipped?.content).toEqual([
+			{
+				type: "text",
+				text: "Not executed: call the `write` tool to resolve the pending action before using other tools.",
+			},
+		]);
 	});
 
 	it("does not yield while the requirement is unmet — escalates after a bare-text turn", async () => {

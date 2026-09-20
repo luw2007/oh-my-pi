@@ -113,6 +113,9 @@
 ### Fixed
 
 - Corrected remote compaction summaries so they accurately report the number of input tokens processed.
+### Fixed
+
+- Fixed soft-required tool gates reporting skipped detour calls as if the assistant had ended its turn.
 
 ## [18.0.4] - 2026-08-24
 
