@@ -1040,7 +1040,7 @@ export class UiHelpers {
 
 	clearEditor(): void {
 		if (this.ctx.settings.get("composer.recallClearedDrafts")) this.ctx.editor.clearDraftForRecall();
-		else this.ctx.editor.clearDraft();
+		else this.ctx.editor.clearDraftUndoably();
 		this.ctx.ui.requestRender();
 	}
 

@@ -919,7 +919,7 @@ export class Composer implements TerminalFrameProvider {
 			this.#requestExit(130);
 			return;
 		}
-		this.editor.setText("");
+		this.editor.clearDraftUndoably();
 		this.#lastInterruptAt = now;
 	}
 

@@ -9,6 +9,8 @@
 - Image-generation overrides now use model selectors, and web-search CLI overrides use --model instead of --provider.
 - Removed the bash tool's env parameter.
 - Eval judge(state, questions) is now awaited and returns answers directly; JudgmentHandle and judgment support in wait() have been removed.
+- Removed support for the env parameter in the bash tool
+- Remapped suspend to Ctrl+Alt+Z so Ctrl+Z can undo input edits.
 
 ### Added
 
@@ -29,6 +31,10 @@
 - Updated sloppy edit tool syntax to use plain text headers instead of XML tags
 - Improved startup performance by validating provider-qualified model selectors against only the relevant provider catalog.
 - Reduced launch time for npm and compiled builds by embedding the model catalog more efficiently.
+
+### Changed
+
+- Ctrl+Z now restores an input draft cleared by Ctrl+C or trimmed by Command+Backspace, including its attached images and pastes.
 
 ### Fixed
 

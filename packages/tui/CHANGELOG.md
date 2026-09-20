@@ -20,6 +20,13 @@
 ### Fixed
 
 - Prevented magic keywords from triggering spelling autocorrect and underlining
+### Breaking Changes
+
+- Bound `tui.editor.undo` to Ctrl+Z, and remapped the app suspend binding to Ctrl+Alt+Z.
+
+### Changed
+
+- `Editor.clearTextUndoably()` clears text as a single undoable edit, so a host-cleared draft can be recovered with undo; `tui.editor.deleteToLineStart` also accepts Command+Backspace.
 
 ## [18.2.5] - 2026-09-17
 

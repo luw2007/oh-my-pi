@@ -98,8 +98,8 @@ export const KEYBINDINGS = {
 		description: "Exit application",
 	},
 	"app.suspend": {
-		defaultKeys: "ctrl+z",
-		description: "Suspend application",
+		defaultKeys: "ctrl+alt+z",
+		description: "Suspend application (remapped from Ctrl+Z, now editor undo)",
 	},
 	"app.display.reset": {
 		defaultKeys: "alt+l",
