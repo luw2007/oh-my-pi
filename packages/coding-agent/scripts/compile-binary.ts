@@ -25,6 +25,8 @@ export interface CodingAgentCompileOptions {
 	readonly minifyIdentifiers?: boolean;
 	/** Disable Bun's built-in Darwin signing before the caller re-signs. */
 	readonly skipBuiltinCodesign?: boolean;
+	/** Optional build tag appended to version (e.g. "luw2007" → "18.2.6+luw2007"). */
+	readonly buildTag?: string;
 }
 
 /**
@@ -45,6 +47,7 @@ export async function compileCodingAgent(options: CodingAgentCompileOptions): Pr
 				"process.env.PI_COMPILED": JSON.stringify("true"),
 				"process.env.PI_TINY_TRANSFORMERS_VERSION": JSON.stringify(options.transformersVersion),
 				"process.env.PI_DOCS_EMBED": JSON.stringify((await buildDocsIndexPayload()).payload),
+				"process.env.PI_BUILD_TAG": JSON.stringify(options.buildTag ?? ""),
 			},
 			// Precompiled bytecode skips parsing the ~20 MB bundle at boot:
 			// `omp --version` 256 ms -> 30 ms on M4 Max (+52 MB binary).

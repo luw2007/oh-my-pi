@@ -100,6 +100,7 @@ async function main(): Promise<void> {
 				target: crossBuild?.target,
 				executablePath: Bun.env.BUN_COMPILE_EXECUTABLE_PATH || undefined,
 				skipBuiltinCodesign: shouldAdhocSign,
+				buildTag: Bun.env.PI_BUILD_TAG || undefined,
 			});
 
 			if (shouldAdhocSign) {
