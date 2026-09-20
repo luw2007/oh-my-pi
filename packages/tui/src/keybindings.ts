@@ -109,7 +109,7 @@ export const TUI_KEYBINDINGS = {
 		description: "Delete word forward",
 	},
 	"tui.editor.deleteToLineStart": {
-		defaultKeys: "ctrl+u",
+		defaultKeys: ["ctrl+u", "super+backspace"],
 		description: "Delete to line start",
 	},
 	"tui.editor.deleteToLineEnd": {
@@ -118,7 +118,7 @@ export const TUI_KEYBINDINGS = {
 	},
 	"tui.editor.yank": { defaultKeys: "ctrl+y", description: "Yank" },
 	"tui.editor.yankPop": { defaultKeys: "alt+y", description: "Yank pop" },
-	"tui.editor.undo": { defaultKeys: ["ctrl+-", "ctrl+_"], description: "Undo" },
+	"tui.editor.undo": { defaultKeys: ["ctrl+z", "ctrl+-", "ctrl+_"], description: "Undo" },
 	"tui.editor.spellingSuggestions": {
 		defaultKeys: "ctrl+.",
 		description: "Show spelling replacements",

@@ -52,7 +52,7 @@ const DEFAULT_ACTION_KEYS: Record<ConfigurableEditorAction, KeyId[]> = {
 	"app.interrupt": ["escape"],
 	"app.clear": ["ctrl+c"],
 	"app.exit": ["ctrl+d"],
-	"app.suspend": ["ctrl+z"],
+	"app.suspend": ["ctrl+alt+z"],
 	"app.display.reset": ["alt+l"],
 	"app.thinking.cycle": ["shift+tab"],
 	"app.model.cycleForward": ["ctrl+p"],
@@ -475,6 +475,30 @@ export class CustomEditor extends Editor {
 		if (historyText !== undefined) this.addToHistory(historyText);
 		this.setText("");
 		this.clearPasteState();
+		this.#clearDraftAttachments();
+	}
+	/** Discard a draft without making it a submitted message; Ctrl+Z restores it. */
+	clearDraftUndoably(): void {
+		const images = [...this.pendingImages];
+		const links = [...this.pendingImageLinks];
+		const imageLinks = this.imageLinks;
+		const texts = [...this.pendingTexts];
+		const counter = this.#textAttachmentCounter;
+		this.clearTextUndoably(() => {
+			this.pendingImages = images;
+			this.pendingImageLinks = links;
+			this.imageLinks = imageLinks;
+			this.pendingTexts = texts;
+			this.#textAttachmentCounter = counter;
+			if (images.length > 0 && links.some(link => link === undefined)) {
+				void this.#materializeDraftLinks();
+			}
+		});
+		this.clearPasteState();
+		this.#clearDraftAttachments();
+	}
+
+	#clearDraftAttachments(): void {
 		this.imageLinks = undefined;
 		this.pendingImages = [];
 		this.pendingImageLinks = [];
@@ -485,7 +509,7 @@ export class CustomEditor extends Editor {
 	/** Preserve a canceled draft in local navigation, then clear the composer. */
 	clearDraftForRecall(): void {
 		if (!this.getText().trim()) {
-			this.clearDraft();
+			this.clearDraftUndoably();
 			return;
 		}
 		const images = [...this.pendingImages];
@@ -503,7 +527,7 @@ export class CustomEditor extends Editor {
 				void this.#materializeDraftLinks();
 			}
 		});
-		this.clearDraft();
+		this.clearDraftUndoably();
 	}
 
 	override restoreHistoryState(restore?: () => void): void {
@@ -1377,7 +1401,7 @@ export class CustomEditor extends Editor {
 		const canonical = parsed !== undefined ? canonicalKeyId(parsed) : undefined;
 		if (canonical !== undefined && this.#matchesAction(canonical, "app.clear")) {
 			if (this.onClear) this.onClear();
-			else this.setText("");
+			else this.clearDraftUndoably();
 			return;
 		}
 		this.#forwardInput(data);

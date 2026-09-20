@@ -56,6 +56,9 @@
 - Fixed generation token-rate displays for subagents and restored the main session's reading after switching focus.
 - Fixed subagent HUD labels and plan filenames being populated with example prompt text on smaller models.
 - Improved shell, file, session, and persistence operations to avoid unnecessary repeated work, improving responsiveness and resource usage.
+### Changed
+
+- Ctrl+Z now undoes input edits, including accidental Ctrl+C clears and Command+Backspace deletion; suspend the application with Ctrl+Alt+Z.
 
 ## [18.2.4] - 2026-09-17
 

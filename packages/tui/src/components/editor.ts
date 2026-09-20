@@ -403,6 +403,7 @@ interface EditorState {
 	lines: string[];
 	cursorLine: number;
 	cursorCol: number;
+	restoreDraft?: () => void;
 }
 
 interface LayoutLine {
@@ -955,8 +956,8 @@ export class Editor implements Component, Focusable {
 		this.#setTextInternal(entry?.text ?? "", cursorAnchor);
 	}
 	/** Internal setText that doesn't reset history state - used by navigateHistory */
-	#setTextInternal(text: string, cursorAnchor: HistoryCursorAnchor = "end"): void {
-		this.#undoStack.length = 0;
+	#setTextInternal(text: string, cursorAnchor: HistoryCursorAnchor = "end", resetUndo = true): void {
+		if (resetUndo) this.#undoStack.length = 0;
 		const lines = sanitizeLoadedText(text).split("\n");
 		this.#state.lines = lines.length === 0 ? [""] : lines;
 		if (cursorAnchor === "start") {
@@ -2580,6 +2581,26 @@ export class Editor implements Component, Focusable {
 		this.#resetKillSequence();
 		this.#setTextInternal(text);
 	}
+	/** Clear an unsubmitted draft as one undoable edit, including paste markers and host attachments. */
+	clearTextUndoably(restore?: () => void): void {
+		if (!this.getText()) return;
+		this.#recordUndoState();
+		const snapshot = this.#undoStack.at(-1);
+		if (snapshot) {
+			const pastes = new Map(this.#pastes);
+			const atoms = new Map(this.#atoms);
+			const pasteCounter = this.#pasteCounter;
+			snapshot.restoreDraft = () => {
+				this.#pastes = pastes;
+				this.#atoms = atoms;
+				this.#pasteCounter = pasteCounter;
+				restore?.();
+			};
+		}
+		this.#historyIndex = -1;
+		this.#resetKillSequence();
+		this.#setTextInternal("", "end", false);
+	}
 	submit(): void {
 		if (this.disableSubmit) return;
 		this.#submitValue();
@@ -3275,8 +3296,9 @@ export class Editor implements Component, Focusable {
 		this.#historyIndex = -1;
 		this.#resetKillSequence();
 		this.#preferredVisualCol = null;
-		Object.assign(this.#state, snapshot);
-
+		const { lines, cursorLine, cursorCol, restoreDraft } = snapshot;
+		Object.assign(this.#state, { lines, cursorLine, cursorCol });
+		restoreDraft?.();
 		this.#notifyChange();
 
 		if (this.#autocompleteState) {
