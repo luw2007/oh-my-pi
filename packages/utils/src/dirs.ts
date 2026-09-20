@@ -26,8 +26,8 @@ export const CONFIG_DIR_NAME: string = ".omp";
 /** Ordered main settings filenames: canonical write target first, legacy-compatible YAML fallback second. */
 export const MAIN_CONFIG_FILENAMES = ["config.yml", "config.yaml"] as const;
 
-/** Version (e.g. "1.0.0") */
-export const VERSION: string = version;
+/** Version (e.g. "1.0.0"). May include a build tag like "+luw2007" when PI_BUILD_TAG is set via Bun define or env. */
+export const VERSION: string = process.env.PI_BUILD_TAG ? `${version}+${process.env.PI_BUILD_TAG}` : version;
 
 /** Default User-Agent header string (e.g. "omp/17.2.12") */
 export const USER_AGENT = `omp/${VERSION}`;
