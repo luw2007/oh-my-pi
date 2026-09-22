@@ -2,6 +2,7 @@ import type { Usage } from "@oh-my-pi/pi-ai";
 import { Container, Spacer } from "../index";
 import { formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
 import { theme } from "../theme/theme";
+import { sanitizeDisplayLineField } from "../overlays/extensions/display-text";
 import { formatMetricRow, MetricRow, type MetricSpec } from "../components/metric";
 
 /** Below this the rate is nonsense (cached/instant responses yield absurd tok/s). */
@@ -32,12 +33,17 @@ export function turnElapsedMs(
 	return elapsed > 0 ? Math.round(elapsed) : undefined;
 }
 
+/** Configured provider and requested model identity shown in usage telemetry. */
+export function formatUsageModel(provider: string, model: string): string {
+	return `${provider}/${model}`;
+}
 function usageRowSpecs(
 	usage: Usage,
 	durationMs?: number,
 	ttftMs?: number,
 	timestamp?: number,
 	turnElapsedMs?: number,
+	model?: string,
 ): MetricSpec[] {
 	const totalInput = usage.input + usage.cacheWrite;
 	const specs: MetricSpec[] = [];
@@ -53,6 +59,8 @@ function usageRowSpecs(
 	if (turnElapsedMs !== undefined && turnElapsedMs > 0) {
 		specs.push({ value: `Δ ${formatDuration(Math.round(turnElapsedMs))}` });
 	}
+	const modelLabel = sanitizeDisplayLineField(model);
+	if (modelLabel) specs.push({ leading: "model", value: modelLabel });
 	specs.push({ leading: theme.icon.input, value: formatNumber(totalInput) });
 	specs.push({ leading: theme.icon.output, value: formatNumber(usage.output) });
 	if (usage.cacheRead > 0) {
@@ -78,8 +86,9 @@ export function formatUsageRow(
 	ttftMs?: number,
 	timestamp?: number,
 	turnElapsedMs?: number,
+	model?: string,
 ): string {
-	return formatMetricRow(usageRowSpecs(usage, durationMs, ttftMs, timestamp, turnElapsedMs), {
+	return formatMetricRow(usageRowSpecs(usage, durationMs, ttftMs, timestamp, turnElapsedMs, model), {
 		separator: "  ",
 	});
 }
@@ -92,8 +101,8 @@ export function isUsageRowBlock(component: object): boolean {
 	return usageRowBlocks.has(component as Container);
 }
 
-// `timestamp` and `turnElapsedMs` are optional and trail the throughput args to
-// preserve the existing (usage, durationMs, ttftMs) call contract — this
+// `timestamp`, `turnElapsedMs`, and `model` are optional and trail the throughput
+// args to preserve the existing (usage, durationMs, ttftMs) call contract — this
 // function is part of the package's public export surface (./modes/components/*).
 export function createUsageRowBlock(
 	usage: Usage,
@@ -101,11 +110,12 @@ export function createUsageRowBlock(
 	ttftMs?: number,
 	timestamp?: number,
 	turnElapsedMs?: number,
+	model?: string,
 ): Container {
 	const block = new Container();
 	block.addChild(new Spacer(1));
 	block.addChild(
-		new MetricRow(usageRowSpecs(usage, durationMs, ttftMs, timestamp, turnElapsedMs), {
+		new MetricRow(usageRowSpecs(usage, durationMs, ttftMs, timestamp, turnElapsedMs, model), {
 			separator: "  ",
 			overflow: "wrap",
 			paddingX: 1,

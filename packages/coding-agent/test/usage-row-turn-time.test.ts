@@ -114,6 +114,14 @@ describe("formatUsageRow turn elapsed", () => {
 		expect(row).toContain("Δ 347ms");
 		expect(row).not.toContain("347.28381699998863");
 	});
+
+	it("renders a sanitized resolved model and omits missing identities", () => {
+		const usage = assistantMessage().usage as Usage;
+		const row = formatUsageRow(usage, undefined, undefined, undefined, undefined, "traex/openrouter-3o");
+		expect(row).toContain("model traex/openrouter-3o");
+		expect(formatUsageRow(usage, undefined, undefined, undefined, undefined, "\u001b[31m")).not.toContain("model ");
+		expect(formatUsageRow(usage)).not.toContain("model ");
+	});
 });
 
 describe("ChatTranscriptBuilder turn elapsed", () => {

@@ -18,7 +18,7 @@ import { TodoReminderComponent } from "@oh-my-pi/pi-tui/chat/todo-reminder";
 import { textContent } from "@oh-my-pi/pi-tui/chat/transcript-entry";
 import { ToolExecutionComponent, type ToolExecutionHandle, toolRenderName } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TtsrNotificationComponent } from "@oh-my-pi/pi-tui/chat/ttsr-notification";
-import { createUsageRowBlock, turnElapsedMs } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import { createUsageRowBlock, formatUsageModel, turnElapsedMs } from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { getSymbolTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "../../modes/types";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
@@ -1579,6 +1579,7 @@ export class EventController {
 						event.message.ttft,
 						event.message.timestamp,
 						turnElapsed,
+						formatUsageModel(event.message.provider, event.message.model),
 					) ??
 						false);
 				if (!usageAttached) {
@@ -1590,6 +1591,7 @@ export class EventController {
 							event.message.ttft,
 							event.message.timestamp,
 							turnElapsed,
+							formatUsageModel(event.message.provider, event.message.model),
 						),
 					);
 				}
