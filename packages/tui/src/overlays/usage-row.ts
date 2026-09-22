@@ -60,7 +60,7 @@ function usageRowSpecs(
 		specs.push({ value: `Δ ${formatDuration(Math.round(turnElapsedMs))}` });
 	}
 	const modelLabel = sanitizeDisplayLineField(model);
-	if (modelLabel) specs.push({ leading: "model", value: modelLabel });
+	if (modelLabel) specs.push({ value: modelLabel });
 	specs.push({ leading: theme.icon.input, value: formatNumber(totalInput) });
 	specs.push({ leading: theme.icon.output, value: formatNumber(usage.output) });
 	if (usage.cacheRead > 0) {
