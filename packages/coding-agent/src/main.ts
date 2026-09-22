@@ -11,6 +11,7 @@ import { EventLoopKeepalive } from "@oh-my-pi/pi-agent-core/utils/yield";
 import type { ImageContent, Model } from "@oh-my-pi/pi-ai";
 import {
 	directoryIsMissing,
+	DISPLAY_VERSION,
 	getLogPath,
 	getProjectDir,
 	normalizePathForComparison,
@@ -1672,7 +1673,7 @@ export async function runRootCommand(
 		const notifs: (InteractiveModeNotify | null)[] = [];
 
 		if (parsedArgs.version) {
-			writeStartupNotice(parsedArgs, `${VERSION}\n`);
+			writeStartupNotice(parsedArgs, `${DISPLAY_VERSION}\n`);
 			process.exit(0);
 		}
 

@@ -4,6 +4,7 @@ import * as nodeFs from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { validateBuildTag } from "@oh-my-pi/pi-utils/dirs";
 import * as pluginCli from "@oh-my-pi/pi-coding-agent/cli/plugin-cli";
 import * as updateCli from "@oh-my-pi/pi-coding-agent/cli/update-cli";
 import {
@@ -176,13 +177,24 @@ describe("parseReportedVersion", () => {
 		// build look like a stale `X.Y.Z` launcher, triggering a binary repair
 		// that rejects the prerelease GitHub release.
 		expect(parseReportedVersion("omp/18.0.6-canary.1")).toBe("18.0.6-canary.1");
+		expect(parseReportedVersion("omp/18.0.5@luw2007")).toBe("18.0.5");
 		expect(parseReportedVersion("omp/18.0.5")).toBe("18.0.5");
+		expect(parseReportedVersion("omp/18.0.5@invalid/tag")).toBeUndefined();
 		expect(parseReportedVersion("not a version")).toBeUndefined();
 	});
 
 	it("rejects version output from a different executable", () => {
 		expect(parseReportedVersion("node/18.0.5")).toBeUndefined();
 		expect(parseReportedVersion("codex/18.0.5")).toBeUndefined();
+	});
+});
+
+describe("validateBuildTag", () => {
+	it("accepts safe owner tags and rejects display injection", () => {
+		expect(validateBuildTag("luw2007.local-1")).toBe("luw2007.local-1");
+		expect(validateBuildTag("")).toBeUndefined();
+		expect(() => validateBuildTag("luw2007\nspoofed")).toThrow("PI_BUILD_TAG");
+		expect(() => validateBuildTag("luw2007/tag")).toThrow("PI_BUILD_TAG");
 	});
 });
 

@@ -26,8 +26,22 @@ export const CONFIG_DIR_NAME: string = ".omp";
 /** Ordered main settings filenames: canonical write target first, legacy-compatible YAML fallback second. */
 export const MAIN_CONFIG_FILENAMES = ["config.yml", "config.yaml"] as const;
 
-/** Version (e.g. "1.0.0"). May include a build tag like "+luw2007" when PI_BUILD_TAG is set via Bun define or env. */
-export const VERSION: string = process.env.PI_BUILD_TAG ? `${version}+${process.env.PI_BUILD_TAG}` : version;
+/** Semantic package version used for update comparison and protocol metadata. */
+export const VERSION: string = version;
+
+const BUILD_TAG_RE = /^[A-Za-z0-9._-]+$/;
+
+/** Validate the display-only owner tag embedded into a compiled local binary. */
+export function validateBuildTag(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	if (!BUILD_TAG_RE.test(value))
+		throw new Error("PI_BUILD_TAG must contain only letters, numbers, dots, underscores, or hyphens");
+	return value;
+}
+
+/** Optional compile-time owner tag shown by local `omp --version` builds. */
+const buildTag = validateBuildTag(process.env.PI_BUILD_TAG);
+export const DISPLAY_VERSION: string = buildTag ? `${VERSION}@${buildTag}` : VERSION;
 
 /** Default User-Agent header string (e.g. "omp/17.2.12") */
 export const USER_AGENT = `omp/${VERSION}`;

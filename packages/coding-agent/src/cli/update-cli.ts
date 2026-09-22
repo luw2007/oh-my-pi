@@ -1176,16 +1176,13 @@ function resolveOmpPath(): string | undefined {
 }
 
 /**
- * Parse the version a launcher reports from `omp --version` output
- * (`omp/X.Y.Z`, or a prerelease such as `omp/X.Y.Z-canary.1`).
- *
- * The prerelease suffix is preserved so a correctly installed canary build
- * verifies as up to date instead of appearing to report a stale `X.Y.Z` and
- * being mistaken for an unreplaced launcher.
+ * Parse the semantic version a launcher reports from `omp --version` output.
+ * Local owner tags (`@name`) are display-only and deliberately stripped: update
+ * comparison and installer verification must keep using published SemVer.
  */
 export function parseReportedVersion(output: string): string | undefined {
 	if (!output.startsWith(`${APP_NAME}/`)) return undefined;
-	return output.slice(APP_NAME.length + 1).match(/^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/)?.[1];
+	return output.slice(APP_NAME.length + 1).match(/^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:@[A-Za-z0-9._-]+)?$/)?.[1];
 }
 
 async function reportedVersionAtPath(binaryPath: string): Promise<string | undefined> {
