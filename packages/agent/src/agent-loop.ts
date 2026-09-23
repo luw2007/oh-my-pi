@@ -3483,15 +3483,25 @@ export function createSyntheticToolResultMessage(
 			? "Tool execution was aborted"
 			: reason === "length"
 				? "Tool call was not executed because the assistant hit its output token limit (stop_reason: length) before the arguments could complete; the recorded arguments are truncated and unsafe to run. Do NOT retry by re-emitting the same large payload — split the work into several smaller tool calls (e.g. for `write`/`edit`, write the first chunk then append the rest with subsequent `edit` insert ops, or break the file into multiple `write` targets)"
-			: reason === "skipped"
-				? errorMessage ?? "Tool call was not executed because the assistant ended its turn"
-				: "Tool call was not executed because the provider stream ended with an error before the tool could run";
+				: reason === "skipped"
+					? (errorMessage ?? "Tool call was not executed because the assistant ended its turn")
+					: "Tool call was not executed because the provider stream ended with an error before the tool could run";
 	const details = syntheticDetailsFor(reason, errorMessage);
 	return {
 		role: "toolResult",
 		toolCallId: toolCall.id,
 		toolName: toolCall.name,
-		content: [{ type: "text", text: reason === "skipped" && errorMessage ? message : errorMessage ? `${message}: ${errorMessage}` : `${message}.` }],
+		content: [
+			{
+				type: "text",
+				text:
+					reason === "skipped" && errorMessage
+						? message
+						: errorMessage
+							? `${message}: ${errorMessage}`
+							: `${message}.`,
+			},
+		],
 		details,
 		isError: true,
 		timestamp: Date.now(),
