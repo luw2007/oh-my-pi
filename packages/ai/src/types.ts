@@ -1030,6 +1030,8 @@ export interface AssistantMessage {
 	api: Api;
 	provider: Provider;
 	model: string;
+	/** Effective reasoning effort sent for this turn, when provider-side thinking was enabled. */
+	reasoningEffort?: Effort;
 	contextSnapshot?: ContextSnapshot;
 	retryRecovery?: AssistantRetryRecovery;
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one

@@ -1412,6 +1412,11 @@ async function runLoopBody(
 					}
 				}
 				if (recovered) {
+					stampReasoningEffort(
+						message,
+						config.getReasoning?.() ?? config.reasoning,
+						config.getDisableReasoning?.() ?? config.disableReasoning,
+					);
 					message = snapshotAssistantMessage(message);
 					currentContext.messages.push(message);
 					stream.push({ type: "message_start", message: snapshotAssistantMessage(message) });
@@ -1946,6 +1951,8 @@ async function streamAssistantResponse(
 					config,
 					stream,
 					requestSignal,
+					effectiveReasoning,
+					effectiveDisableReasoning,
 				);
 				await finishChat(aborted);
 				return aborted;
@@ -2000,6 +2007,8 @@ async function streamAssistantResponse(
 										partialMessage,
 										stream,
 										`Discarded after GPT-5 Harmony protocol leakage (${signalListLabel(detection.signals)})`,
+										effectiveReasoning,
+										effectiveDisableReasoning,
 									);
 									context.messages.pop();
 									addedPartial = false;
@@ -2008,6 +2017,7 @@ async function streamAssistantResponse(
 							}
 						}
 						finalMessage = snapshotAssistantMessage(finalMessage);
+						stampReasoningEffort(finalMessage, effectiveReasoning, effectiveDisableReasoning);
 						// Expand inline macros (and any other registered rewrite) on the
 						// finalized message before it reaches the context, the UI, or tool
 						// dispatch — so a single mutation is the source of truth for all three.
@@ -2287,6 +2297,8 @@ async function streamAssistantResponse(
 								partialMessage,
 								stream,
 								`Discarded after GPT-5 Harmony protocol leakage (${signalListLabel(detection.signals)})`,
+								effectiveReasoning,
+								effectiveDisableReasoning,
 							);
 							context.messages.pop();
 							addedPartial = false;
@@ -2297,6 +2309,7 @@ async function streamAssistantResponse(
 				if (config.transformAssistantMessage) {
 					await config.transformAssistantMessage(trailing, requestSignal);
 				}
+				stampReasoningEffort(trailing, effectiveReasoning, effectiveDisableReasoning);
 				trailing = snapshotAssistantMessage(trailing);
 				const finalToolCallsCanDispatch =
 					!requestSignal?.aborted &&
@@ -2428,15 +2441,27 @@ function recoverTransientErrorToolTurn(
 	};
 }
 
+function stampReasoningEffort(
+	message: AssistantMessage,
+	reasoning: AgentLoopConfig["reasoning"] | undefined,
+	disableReasoning: boolean | undefined,
+): void {
+	if (!disableReasoning && reasoning !== undefined) message.reasoningEffort = reasoning;
+}
+
 function emitDiscardedHarmonyPartial(
 	partialMessage: AssistantMessage | null,
 	stream: EventStream<AgentEvent, AgentMessage[]>,
 	errorMessage: string,
+	reasoning: AgentLoopConfig["reasoning"] | undefined,
+	disableReasoning: boolean | undefined,
 ): void {
 	if (!partialMessage) return;
+	const message = { ...partialMessage, stopReason: "error" as const, errorMessage };
+	stampReasoningEffort(message, reasoning, disableReasoning);
 	stream.push({
 		type: "message_end",
-		message: snapshotAssistantMessage({ ...partialMessage, stopReason: "error", errorMessage }),
+		message: snapshotAssistantMessage(message),
 	});
 }
 
@@ -2467,13 +2492,7 @@ function buildToolCallAbortMessages(
 	}
 	return hasToolCall ? messages : undefined;
 }
-
-/** Resolve the human-readable reason an abort carried. A caller that aborts via
- *  `AbortController.abort(reason)` with a string or a non-`AbortError` `Error`
- *  (e.g. the coding agent's user-interrupt label) gets that text surfaced on the
- *  synthesized assistant message's `errorMessage`; a bare `abort()` (whose
- *  `signal.reason` is the default `AbortError` `DOMException`) falls back to the
- *  generic sentinel that downstream renderers treat as "no specific reason". */
+/** Resolve the human-readable reason an abort carried. */
 export function abortReasonText(signal: AbortSignal | undefined): string {
 	const scopedReason = toolScopedAbortReason(signal);
 	if (scopedReason) return scopedReason.message;
@@ -2493,6 +2512,8 @@ function emitAbortedAssistantMessage(
 	config: AgentLoopConfig,
 	stream: EventStream<AgentEvent, AgentMessage[]>,
 	requestSignal: AbortSignal | undefined,
+	reasoning: AgentLoopConfig["reasoning"] | undefined,
+	disableReasoning: boolean | undefined,
 ): AssistantMessage {
 	const model = config.getModel?.() ?? config.model;
 	const errorMessage = abortReasonText(requestSignal);
@@ -2521,15 +2542,12 @@ function emitAbortedAssistantMessage(
 				errorId,
 				timestamp: Date.now(),
 			};
-	// Only tool calls that reached `toolcall_end` survive abort/error replay. A
-	// labeled user interrupt still surfaces through `errorMessage`, but partial
-	// tool arguments are unsafe to keep and can carry incomplete provider IDs.
+	stampReasoningEffort(base, reasoning, disableReasoning);
 	const retained = retainCompletedToolCalls(base, completedToolCallIds);
 	const scopedAbort = toolScopedAbortReason(requestSignal);
 	const toolCallAbortMessages = scopedAbort ? buildToolCallAbortMessages(retained, scopedAbort) : undefined;
-	if (toolCallAbortMessages) {
-		retained.toolCallAbortMessages = toolCallAbortMessages;
-	}
+	if (toolCallAbortMessages) retained.toolCallAbortMessages = toolCallAbortMessages;
+	stampReasoningEffort(retained, reasoning, disableReasoning);
 	const abortedMessage = snapshotAssistantMessage(retained);
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = abortedMessage;

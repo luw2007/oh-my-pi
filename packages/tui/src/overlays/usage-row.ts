@@ -1,4 +1,5 @@
 import type { Usage } from "@oh-my-pi/pi-ai";
+import type { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { Container, Spacer } from "../index";
 import { formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
 import { theme } from "../theme/theme";
@@ -33,9 +34,9 @@ export function turnElapsedMs(
 	return elapsed > 0 ? Math.round(elapsed) : undefined;
 }
 
-/** Configured provider and requested model identity shown in usage telemetry. */
-export function formatUsageModel(provider: string, model: string): string {
-	return `${provider}/${model}`;
+/** Configured provider, requested model, and effective thinking effort shown in usage telemetry. */
+export function formatUsageModel(provider: string, model: string, reasoningEffort?: Effort): string {
+	return `${provider}/${model}${reasoningEffort ? `:${reasoningEffort}` : ""}`;
 }
 function usageRowSpecs(
 	usage: Usage,

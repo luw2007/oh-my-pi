@@ -498,7 +498,7 @@ export class ChatTranscriptBuilder {
 		this.#pendingUsageDuration = message.duration;
 		this.#pendingUsageTtft = message.ttft;
 		this.#pendingUsageTimestamp = message.timestamp;
-		this.#pendingUsageModel = formatUsageModel(message.provider, message.model);
+		this.#pendingUsageModel = formatUsageModel(message.provider, message.model, message.reasoningEffort);
 		this.#pendingReadUsageCallIds = this.#pendingUsage ? groupedReadUsageCallIds(message) : undefined;
 		this.#pendingUsageElapsedMs =
 			this.#pendingUsage && displayPreferences.showTurnTime ? this.#turnElapsedMs(message) : undefined;

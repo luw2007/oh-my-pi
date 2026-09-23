@@ -10,13 +10,14 @@ import * as path from "node:path";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import type { Usage } from "@oh-my-pi/pi-ai";
+import { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ExtensionRunner } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
 import { ChatTranscriptBuilder } from "@oh-my-pi/pi-tui/chat/chat-transcript-builder";
-import { formatUsageRow } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import { formatUsageModel, formatUsageRow } from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/event-controller";
 import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
@@ -123,6 +124,14 @@ describe("formatUsageRow turn elapsed", () => {
 		expect(formatUsageRow(usage, undefined, undefined, undefined, undefined, "\u001b[31m")).not.toContain("model ");
 		expect(formatUsageRow(usage)).not.toContain("model ");
 	});
+
+	it("renders effective thinking effort after the model identity", () => {
+		const usage = assistantMessage().usage as Usage;
+		const model = formatUsageModel("codex_gpt", "gpt-5.6-terra", Effort.High);
+		const row = formatUsageRow(usage, undefined, undefined, undefined, undefined, model);
+		expect(row).toContain("codex_gpt/gpt-5.6-terra:high");
+		expect(formatUsageModel("codex_gpt", "gpt-5.6-terra")).toBe("codex_gpt/gpt-5.6-terra");
+	});
 });
 
 describe("ChatTranscriptBuilder turn elapsed", () => {
@@ -149,6 +158,12 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 		const rendered = renderedText(transcript.container);
 		expect(rendered).toContain(TURN_ELAPSED_LABEL);
 		expect(rendered).toContain(USAGE_LABEL);
+	});
+	it("includes effective thinking effort in rebuilt usage rows", () => {
+		settings.set("display.showTurnTime", false);
+		const transcript = builder();
+		transcript.rebuild(toEntries([userMessage(), assistantMessage({ reasoningEffort: Effort.High })]));
+		expect(renderedText(transcript.container)).toContain("anthropic/claude-sonnet-4-5:high");
 	});
 
 	it("hides the delta when display.showTurnTime is off", () => {
@@ -381,6 +396,11 @@ describe("focus-attach mid-turn keeps the prompt→yield delta", () => {
 		const rendered = renderedText(chatContainer);
 		expect(rendered).toContain(TURN_ELAPSED_LABEL);
 		expect(rendered).toContain(USAGE_LABEL);
+	});
+	it("includes effective thinking effort in live usage rows", async () => {
+		const { controller, chatContainer } = createFixture();
+		await driveAssistantTurn(controller, assistantMessage({ reasoningEffort: Effort.High }));
+		expect(renderedText(chatContainer)).toContain("anthropic/claude-sonnet-4-5:high");
 	});
 
 	it("clears a stale prompt anchor for a synthetic-only run", async () => {

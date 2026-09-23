@@ -640,7 +640,7 @@ export class UiHelpers {
 				pendingUsageDuration = message.duration;
 				pendingUsageTtft = message.ttft;
 				pendingUsageTimestamp = message.timestamp;
-				pendingUsageModel = formatUsageModel(message.provider, message.model);
+				pendingUsageModel = formatUsageModel(message.provider, message.model, message.reasoningEffort);
 				pendingReadUsageCallIds = pendingUsage ? groupedReadUsageCallIds(message) : undefined;
 				pendingUsageTurnElapsed = this.ctx.settings.get("display.showTurnTime")
 					? turnElapsedMs(turnStartedAt, message)

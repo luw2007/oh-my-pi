@@ -1579,7 +1579,7 @@ export class EventController {
 						event.message.ttft,
 						event.message.timestamp,
 						turnElapsed,
-						formatUsageModel(event.message.provider, event.message.model),
+						formatUsageModel(event.message.provider, event.message.model, event.message.reasoningEffort),
 					) ??
 						false);
 				if (!usageAttached) {
@@ -1591,7 +1591,7 @@ export class EventController {
 							event.message.ttft,
 							event.message.timestamp,
 							turnElapsed,
-							formatUsageModel(event.message.provider, event.message.model),
+							formatUsageModel(event.message.provider, event.message.model, event.message.reasoningEffort),
 						),
 					);
 				}
