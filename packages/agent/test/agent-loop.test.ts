@@ -20,6 +20,7 @@ import type {
 } from "@oh-my-pi/pi-agent-core/types";
 import { ASIDE_MESSAGE_COMMIT, ASIDE_MESSAGE_DISCARD, SPECULATIVE_STREAM_SESSION } from "@oh-my-pi/pi-agent-core/types";
 import type { AssistantMessage, AssistantMessageEvent, Context, Message, ToolResultMessage } from "@oh-my-pi/pi-ai";
+import { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { createMockModel, type MockResponse } from "@oh-my-pi/pi-ai/providers/mock";
 import { kCursorExecResolved, setStreamingPartialJson } from "@oh-my-pi/pi-ai/utils/block-symbols";
 import { AssistantMessageEventStream } from "@oh-my-pi/pi-ai/utils/event-stream";
@@ -79,6 +80,26 @@ describe("agentLoop with AgentMessage", () => {
 		expect(eventTypes).toContain("message_end");
 		expect(eventTypes).toContain("turn_end");
 		expect(eventTypes).toContain("agent_end");
+	});
+
+	it("records the effective reasoning effort on assistant messages", async () => {
+		const context: AgentContext = {
+			systemPrompt: ["You are helpful."],
+			messages: [],
+			tools: [],
+		};
+		const mock = createMockModel({ responses: [{ content: ["Thinking done"] }] });
+		const stream = agentLoop(
+			[createUserMessage("Think")],
+			context,
+			{ model: mock.model, convertToLlm: identityConverter, reasoning: Effort.High },
+			undefined,
+			mock.stream,
+		);
+
+		const messages = await stream.result();
+		const assistant = messages.find((message): message is AssistantMessage => message.role === "assistant");
+		expect(assistant?.reasoningEffort).toBe(Effort.High);
 	});
 
 	it("ends gracefully without a provider call after the deadline", async () => {
@@ -297,7 +318,7 @@ describe("agentLoop with AgentMessage", () => {
 			tools: [],
 		};
 		const mock = createMockModel();
-		const config: AgentLoopConfig = { model: mock.model, convertToLlm: identityConverter };
+		const config: AgentLoopConfig = { model: mock.model, convertToLlm: identityConverter, reasoning: Effort.High };
 		const controller = new AbortController();
 		// The mock provider would reject without a configured response; we want the
 		// agent's abort path to kick in before any event is emitted. Use a raw stream
@@ -317,6 +338,7 @@ describe("agentLoop with AgentMessage", () => {
 		expect(finalMessage.role).toBe("assistant");
 		if (finalMessage.role !== "assistant") throw new Error("Expected assistant message");
 		expect(finalMessage.stopReason).toBe("aborted");
+		expect(finalMessage.reasoningEffort).toBe(Effort.High);
 		expect(finalMessage.errorMessage).toBe("Request was aborted");
 		expect(events.map(event => event.type)).toContain("agent_end");
 	});
