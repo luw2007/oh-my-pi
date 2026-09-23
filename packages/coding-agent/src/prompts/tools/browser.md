@@ -1,58 +1,37 @@
-Drive real Chromium tabs from JavaScript or Python Eval with the global `browser` object.
+Drive real Chromium tabs from JavaScript or Python Eval via global `browser`.
 
 <instruction>
-- Static content? Use `read`. Use `browser` for JavaScript execution, authenticated sessions, and interactive actions.
-- JavaScript: `await browser.open(options)` returns a `BrowserTab`; `browser.tab(name)` returns an existing handle; `await browser.close(options)` releases tabs.
-- Python: `await browser.open(name=…, url=…)`, synchronous `browser.tab(name)`, and `await browser.close(name=…)`. Python methods accept keyword arguments.
-- `open` options: `name`, `url`, `app`, `viewport`, `wait_until`, `dialogs`, `timeout`, `persist`.
-- `close` options: `name`, `all`, `kill`, `timeout`.
-- Direct tab helpers:
-  - Navigation: `url`, `title`, `goto`.
-  - Inspection: `observe`, `ariaSnapshot`, `screenshot`, `extract`.
-  - Interaction: `click`, `type`, `fill`, `press`, `scroll`, `drag`, `scrollIntoView`, `select`, `uploadFile`.
-  - Waiting: `waitFor`, `waitForSelector`, `waitForUrl`.
-  - Page execution: `evaluate`. `tab.evaluate(string)` evaluates the string as a page-global expression; top-level `return` is invalid. Pass a function or invoke an IIFE string to use `return`.
-- `tab.id(n)` / `tab.ref("e5")` return `BrowserElement` handles supporting `click`, `type`, `fill`, `press`, `hover`, `focus`, `select`, `uploadFile`, `scrollIntoView`, `boundingBox`, `isVisible`, `isHidden`, and `evaluate`. A string passed to `BrowserElement.evaluate` is a function expression invoked with the element as its first argument.
-- JavaScript `await tab.run(fnOrCode, { args?, timeout? })` runs a function or code string. Functions receive `{ tab, page, browser, wait, assert }`; cell closures are not captured. Plain data, functions, and `RegExp` values are supported in `args`.
-- Python `await tab.run(code, timeout=…)` accepts a JavaScript code string only. Direct Python helpers use the same method names; keyword arguments become a trailing JavaScript options object.
-- `tab.run` executes in an isolated JavaScript tab runtime with raw Puppeteer `page`/`browser`, ordinary Eval helpers, and full Bun/Node + tool-bridge access. It is not sandboxed.
-- Direct helpers and `tab.run` return real structured values. Nonempty inner `display` text prints in the outer Eval cell; screenshots surface as Eval images.
-- Selectors accept CSS plus Puppeteer `aria/…`, `text/…`, `xpath/…`, and `pierce/…` query handlers.
-- Navigation and re-renders invalidate observed ids and refs. Re-observe, then act in the same cell.
-- Use `tab.select` for `<select>` elements; `tab.fill` does not support them.
-- Raw request interception lasts only for the current `tab.run`.
+- Static content → `read`; browser → JavaScript, authenticated sessions, interaction.
+- Open before use: JS `await browser.open(options)`; Python `await browser.open(name=…, url=…)`. `browser.tab(name)` only retrieves an opened tab. Close with `browser.close`; options: `name`, `all`, `kill`, `timeout`.
+- Open options: `name`, `url`, `app`, `viewport`, `wait_until`, `dialogs`, `timeout`, `persist`.
+- Tab helpers: navigation `url/title/goto`; inspect `observe/ariaSnapshot/screenshot/extract`; act `click/type/fill/press/scroll/drag/scrollIntoView/select/uploadFile`; wait `waitFor/waitForSelector/waitForUrl`; page-global `evaluate` (string cannot use top-level `return`).
+- `tab.id(n)`/`ref("e5")` → element helpers: click/type/fill/press/hover/focus/select/uploadFile/scrollIntoView/boundingBox/visibility/evaluate. Re-render/navigation invalidates refs: re-observe and act in one cell. `<select>` requires `select`, not `fill`.
+- `tab.run(fnOrCode,{args?,timeout?})` runs isolated JS with `{tab,page,browser,wait,assert}`, raw Puppeteer, Bun/Node, and tool bridge; closures are not captured and it is NOT sandboxed. Python accepts JS code only: `tab.run(code, timeout=…)`.
+- Selectors: CSS or Puppeteer `aria/`, `text/`, `xpath/`, `pierce/`. Raw request interception lasts only for that `tab.run`.
+- Calls return structured values; inner `display` prints outward; screenshots surface as Eval images.
 
 Application modes:
-- Omit `app` for default automation; no executable path required. Managed Chromium installs automatically on first use.
-- `app.path`: launch the specified browser or Electron executable. Chromium-family browsers use an omp-owned profile unless `args` supplies `--user-data-dir`.
-- `app.cdp_url`: attach to an existing CDP endpoint.
-- `app.relay: true`: drive the user's Chrome through the omp relay. `app.target` selects a tab by URL/title substring; without it, the visible tab is adopted. Opening with `url` navigates that adopted tab.
-- Relay sessions are the user's real logged-in browser. Sites attribute actions to the user. Name a target or create a dedicated tab; NEVER navigate the visible tab without authorization.
-- Closing releases the managed tab. It never closes relay/CDP-attached pages. `kill: true` terminates only applications spawned by this process, never reused browser processes.
-- Idle tabs auto-freeze at turn settle (animated pages stop burning CPU/GPU) and unfreeze on next use; tabs idle past the idle-close timeout are closed. Pass `persist: true` on `open` to keep a tab live across turns (e.g. multi-step login); `browser.close` still releases explicitly.
+- No `app`: managed Chromium. `app.path`: browser/Electron; omp profile unless `--user-data-dir`. `app.cdp_url`: attach CDP.
+- `app.relay:true`: user's logged-in Chrome. Select `app.target` or adopt visible tab; NEVER navigate the visible tab without authorization. Sites attribute actions to the user.
+- Close releases managed/attached tabs; it never closes relay/CDP pages. `kill:true` terminates only processes spawned here.
+- Idle tabs freeze and later auto-close. `persist:true` keeps one live across turns; explicit close still releases it.
 </instruction>
 
 <examples>
 ```javascript
 const tab = await browser.open({ name: "docs", url: "https://example.com" });
-const observed = await tab.observe();
-await tab.id(observed.elements[0].id).click();
-const title = await tab.run(async ({ tab }, suffix) => (await tab.title()) + suffix, { args: ["!"] });
+const o = await tab.observe(); await tab.id(o.elements[0].id).click();
+const title = await tab.run(async ({ tab }, s) => (await tab.title()) + s, { args: ["!"] });
 await tab.close();
 ```
-
 ```python
 tab = await browser.open(name="docs", url="https://example.com")
-observed = await tab.observe()
-await tab.id(observed["elements"][0]["id"]).click()
-title = await tab.run("return await tab.title();", timeout=30)
+o = await tab.observe(); await tab.id(o["elements"][0]["id"]).click()
 await tab.close()
 ```
 </examples>
 
 <critical>
-- MUST open a tab before direct use; `browser.tab(name)` does not open one.
-- Default to `tab.observe()`; use screenshots for visual confirmation.
-- `tab.run` has full Bun/Node and tool-bridge access; it is not sandboxed.
-- Relay and CDP actions operate on real user sessions.
+- Default to `observe`; use screenshots for visual confirmation.
+- `tab.run` is privileged, not sandboxed. Relay/CDP acts as the user.
 </critical>

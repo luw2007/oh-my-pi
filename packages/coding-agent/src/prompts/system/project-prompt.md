@@ -18,8 +18,7 @@ MUST follow these context files for all tasks:
 
 {{#if agentsMdSearch.files.length}}
 <dir-context>
-Some directories may have rules; deeper rules override higher ones.
-Before changes in these directories, MUST read:
+Deeper directory rules override higher ones. Before changing these directories, MUST read:
 {{#list agentsMdSearch.files join="\n"}}- {{this}}{{/list}}
 </dir-context>
 {{/if}}
@@ -39,9 +38,10 @@ Working-directory layout: newest mtime first; depth ≤ 3.
 </workspace-tree>
 {{/if}}
 {{/if}}
+
 {{#if additionalWorkspaceRoots.length}}
 <workspace-roots>
-Additional workspace directories. This CURRENT workspace state supersedes workspace changes mentioned earlier in the conversation. {{#ifAny (includes tools "read") (includes tools "grep") (includes tools "glob") (includes tools "edit")}}Use absolute paths under these roots to {{#has tools "read"}}`{{toolRefs.read}}`{{/has}}{{#has tools "grep"}}{{#ifAny (includes tools "read")}}/{{/ifAny}}`{{toolRefs.grep}}`{{/has}}{{#has tools "glob"}}{{#ifAny (includes tools "read") (includes tools "grep")}}/{{/ifAny}}`{{toolRefs.glob}}`{{/has}}{{#has tools "edit"}}{{#ifAny (includes tools "read") (includes tools "grep") (includes tools "glob")}}/{{/ifAny}}`{{toolRefs.edit}}`{{/has}}.{{/ifAny}} Manage with `/add-dir` and `/remove-dir`; `/dirs` lists them.
+Additional workspace directories. CURRENT workspace state supersedes earlier conversation state.{{#ifAny (includes tools "read") (includes tools "grep") (includes tools "glob") (includes tools "edit")}} Use absolute paths here with {{#has tools "read"}}`{{toolRefs.read}}`{{/has}}{{#has tools "grep"}}/{{#ifAny (includes tools "read")}}/{{/ifAny}}`{{toolRefs.grep}}`{{/has}}{{#has tools "glob"}}/{{#ifAny (includes tools "read") (includes tools "grep")}}/{{/ifAny}}`{{toolRefs.glob}}`{{/has}}{{#has tools "edit"}}/{{#ifAny (includes tools "read") (includes tools "grep") (includes tools "glob")}}/{{/ifAny}}`{{toolRefs.edit}}`{{/has}}.{{/ifAny}} Manage with `/add-dir`, `/remove-dir`, `/dirs`.
 {{#each additionalWorkspaceRoots}}
 - {{this}}
 {{/each}}
