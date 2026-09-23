@@ -36,7 +36,7 @@ import { textContent } from "@oh-my-pi/pi-tui/chat/transcript-entry";
 import { ToolActivityContainer } from "@oh-my-pi/pi-tui/chrome/tool-activity";
 import { ToolExecutionComponent, type ToolExecutionHandle, toolRenderName } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TranscriptBlock, TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
-import { createUsageRowBlock, turnElapsedMs } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import { createUsageRowBlock, formatUsageModel, turnElapsedMs } from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { UserMessageComponent } from "@oh-my-pi/pi-tui/chat/user-message";
 import { decodeStreamedToolArgs, streamingStringKeysForTool } from "../../modes/controllers/tool-args-reveal";
 import { materializeImageReferenceLinksSync } from "@oh-my-pi/pi-tui/prompt/image-references";
@@ -390,6 +390,7 @@ export class UiHelpers {
 		let pendingUsageTimestamp: number | undefined;
 		let pendingReadUsageCallIds: string[] | undefined;
 		let pendingUsageTurnElapsed: number | undefined;
+		let pendingUsageModel: string | undefined;
 		let turnStartedAt: number | undefined;
 		const flushPendingUsage = () => {
 			if (!pendingUsage) return;
@@ -402,6 +403,7 @@ export class UiHelpers {
 					pendingUsageTtft,
 					pendingUsageTimestamp,
 					pendingUsageTurnElapsed,
+					pendingUsageModel,
 				) ??
 					false);
 			if (!usageAttached) {
@@ -414,6 +416,7 @@ export class UiHelpers {
 						pendingUsageTtft,
 						pendingUsageTimestamp,
 						pendingUsageTurnElapsed,
+						pendingUsageModel,
 					),
 				);
 			}
@@ -423,6 +426,7 @@ export class UiHelpers {
 			pendingUsageTimestamp = undefined;
 			pendingReadUsageCallIds = undefined;
 			pendingUsageTurnElapsed = undefined;
+			pendingUsageModel = undefined;
 		};
 		// Rebuild-time mirror of the event controller's displaceable-poll
 		// bookkeeping: a `hub` wait that found every watched job still running is
@@ -636,6 +640,7 @@ export class UiHelpers {
 				pendingUsageDuration = message.duration;
 				pendingUsageTtft = message.ttft;
 				pendingUsageTimestamp = message.timestamp;
+				pendingUsageModel = formatUsageModel(message.provider, message.model);
 				pendingReadUsageCallIds = pendingUsage ? groupedReadUsageCallIds(message) : undefined;
 				pendingUsageTurnElapsed = this.ctx.settings.get("display.showTurnTime")
 					? turnElapsedMs(turnStartedAt, message)

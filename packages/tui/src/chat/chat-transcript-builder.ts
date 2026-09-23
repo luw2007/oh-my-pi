@@ -59,7 +59,7 @@ import { groupedReadUsageCallIds, ReadToolGroupComponent, readArgsCollapseIntoGr
 import { SkillMessageComponent } from "./skill-message";
 import { ToolExecutionComponent } from "./tool-execution";
 import { TranscriptContainer } from "../chrome/transcript-container";
-import { createUsageRowBlock, turnElapsedMs } from "../overlays/usage-row";
+import { createUsageRowBlock, formatUsageModel, turnElapsedMs } from "../overlays/usage-row";
 import { CollapsedSyntheticMessageComponent, UserMessageComponent } from "./user-message";
 
 export interface ChatTranscriptBuilderDeps {
@@ -87,6 +87,7 @@ export class ChatTranscriptBuilder {
 	#pendingUsageTimestamp: number | undefined;
 	#pendingReadUsageCallIds: string[] | undefined;
 	#pendingUsageElapsedMs: number | undefined;
+	#pendingUsageModel: string | undefined;
 	#turnStartedAt: number | undefined;
 	#lastAssistantUsage: Usage | undefined;
 	#servedModelTracker = new ServedModelTracker();
@@ -155,6 +156,7 @@ export class ChatTranscriptBuilder {
 		this.#pendingUsageTimestamp = undefined;
 		this.#pendingReadUsageCallIds = undefined;
 		this.#pendingUsageElapsedMs = undefined;
+		this.#pendingUsageModel = undefined;
 		this.#turnStartedAt = undefined;
 		this.#lastAssistantUsage = undefined;
 		this.#servedModelTracker = new ServedModelTracker();
@@ -240,6 +242,7 @@ export class ChatTranscriptBuilder {
 				this.#pendingUsageTtft,
 				this.#pendingUsageTimestamp,
 				this.#pendingUsageElapsedMs,
+				this.#pendingUsageModel,
 			) ??
 				false);
 		if (!usageAttached) {
@@ -252,6 +255,7 @@ export class ChatTranscriptBuilder {
 					this.#pendingUsageTtft,
 					this.#pendingUsageTimestamp,
 					this.#pendingUsageElapsedMs,
+					this.#pendingUsageModel,
 				),
 			);
 		}
@@ -261,6 +265,7 @@ export class ChatTranscriptBuilder {
 		this.#pendingUsageTimestamp = undefined;
 		this.#pendingReadUsageCallIds = undefined;
 		this.#pendingUsageElapsedMs = undefined;
+		this.#pendingUsageModel = undefined;
 	}
 
 	#appendChatMessage(message: AgentMessage): void {
@@ -493,6 +498,7 @@ export class ChatTranscriptBuilder {
 		this.#pendingUsageDuration = message.duration;
 		this.#pendingUsageTtft = message.ttft;
 		this.#pendingUsageTimestamp = message.timestamp;
+		this.#pendingUsageModel = formatUsageModel(message.provider, message.model);
 		this.#pendingReadUsageCallIds = this.#pendingUsage ? groupedReadUsageCallIds(message) : undefined;
 		this.#pendingUsageElapsedMs =
 			this.#pendingUsage && displayPreferences.showTurnTime ? this.#turnElapsedMs(message) : undefined;
