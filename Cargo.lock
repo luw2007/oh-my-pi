@@ -183,6 +183,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arboard"
 version = "3.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -557,9 +566,9 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "bigdecimal"
-version = "0.4.11"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fa3f3d8cbf4dffcfe4991de61d012bef509a409ecbe9dd41049bfe32b4d4653"
+checksum = "4d6867f1565b3aad85681f1015055b087fcfd840d6aeee6eee7f2da317603695"
 dependencies = [
  "autocfg",
  "libm",
@@ -631,6 +640,9 @@ name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "bitvec"
@@ -801,6 +813,7 @@ dependencies = [
  "pi-vfs",
  "pretty_assertions",
  "rand 0.10.3",
+ "rlimit",
  "rpds",
  "serde",
  "strum",
@@ -820,16 +833,19 @@ dependencies = [
 [[package]]
 name = "brush-parser"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f64b19efc02f0dd6cac1d462e20a1098f425f09cb13624efbb1b7d63f061735"
 dependencies = [
+ "anyhow",
+ "arbitrary",
  "bon",
  "cached",
  "getrandom 0.4.3",
  "indenter",
  "insta",
+ "miette",
  "peg",
+ "pretty_assertions",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "tracing",
  "utf8-chars",
@@ -1848,6 +1864,17 @@ name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+
+[[package]]
+name = "derive_arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "diff"
@@ -4136,9 +4163,9 @@ checksum = "c9356095b4b41197bba32173600e1582792cda618f65d12f68e2e77d273413c5"
 
 [[package]]
 name = "html-to-markdown-rs"
-version = "3.15.1"
+version = "3.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1287459abcb674d1fb9a54b2860630346183c38aae85fc57b69e5fbeff4e0d46"
+checksum = "03602615945d9872da947326d6054d51f891c1b42d611461eff35c0565be03e8"
 dependencies = [
  "ahash",
  "astral-tl",
@@ -4152,7 +4179,6 @@ dependencies = [
  "regex",
  "thiserror 2.0.21",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -4699,6 +4725,7 @@ dependencies = [
  "once_cell",
  "pest",
  "pest_derive",
+ "ron",
  "serde",
  "similar 2.7.0",
  "tempfile",
@@ -5378,6 +5405,28 @@ dependencies = [
  "log",
  "objc",
  "paste",
+]
+
+[[package]]
+name = "miette"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
+dependencies = [
+ "cfg-if",
+ "miette-derive",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
+name = "miette-derive"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -6308,9 +6357,9 @@ dependencies = [
 
 [[package]]
 name = "pdf-inspector"
-version = "1.25.2"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef5970f05a55de82c8d6d6fd5f8ff162b50fc7828cc1fd0abd965abad6fcbc5b"
+checksum = "4c7bbb3b63dec43a1c849508e0da95833af6185649f121e41fc3cbd2d3b2e639"
 dependencies = [
  "env_logger",
  "include_dir",
@@ -6523,7 +6572,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ast"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "anyhow",
  "ast-grep-core",
@@ -6593,7 +6642,7 @@ dependencies = [
 
 [[package]]
 name = "pi-builtins"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "ansi-width",
  "anyhow",
@@ -6646,6 +6695,7 @@ dependencies = [
  "os_display",
  "parking_lot",
  "parse_datetime",
+ "pi-iso",
  "pi-vfs",
  "pi-walker",
  "platform-info",
@@ -6677,11 +6727,11 @@ dependencies = [
 
 [[package]]
 name = "pi-diff"
-version = "18.2.8"
+version = "18.4.1"
 
 [[package]]
 name = "pi-edit"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "async-trait",
  "parking_lot",
@@ -6700,7 +6750,7 @@ dependencies = [
 
 [[package]]
 name = "pi-iso"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "async-trait",
  "libc",
@@ -6712,7 +6762,7 @@ dependencies = [
 
 [[package]]
 name = "pi-natives"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6799,7 +6849,7 @@ dependencies = [
 
 [[package]]
 name = "pi-predict"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -6817,7 +6867,7 @@ dependencies = [
 
 [[package]]
 name = "pi-shell"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6847,8 +6897,9 @@ dependencies = [
 
 [[package]]
 name = "pi-vcs"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
+ "futures",
  "gix",
  "gix-utils",
  "jj-lib",
@@ -6862,7 +6913,7 @@ dependencies = [
 
 [[package]]
 name = "pi-vfs"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "async-trait",
  "libc",
@@ -6875,7 +6926,7 @@ dependencies = [
 
 [[package]]
 name = "pi-voice"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "bytes",
  "flume",
@@ -6889,7 +6940,7 @@ dependencies = [
 
 [[package]]
 name = "pi-walker"
-version = "18.2.8"
+version = "18.4.1"
 dependencies = [
  "globset",
  "ignore",
@@ -7682,6 +7733,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f35ee2729c56bb610f6dba436bf78135f728b7373bdffae2ec815b2d3eb98cc3"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "ron"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81116b9531d61eabc41aeb228e4b6b2435bcca3233b98cf3b3077d4e6e9debb3"
+dependencies = [
+ "bitflags 2.13.2",
+ "once_cell",
+ "serde",
+ "serde_derive",
+ "typeid",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -9470,6 +9535,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
+name = "typeid"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10799,9 +10870,9 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wl-clipboard-rs"
-version = "0.9.4"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d7888ccd4896447b2d14d3a9350a85df2aeb6f181e2e7a31349d104ac46cac1"
+checksum = "e9651471a32e87d96ef3a127715382b2d11cc7c8bb9822ded8a7cc94072eb0a3"
 dependencies = [
  "libc",
  "log",
