@@ -7,6 +7,7 @@ import { TempDir } from "@oh-my-pi/pi-utils";
 const probePath = path.resolve(import.meta.dir, "fixtures", "legacy-pi-extension-cache-probe.ts");
 const healthProbePath = path.resolve(import.meta.dir, "fixtures", "legacy-pi-extension-cache-health-probe.ts");
 const cjsProbePath = path.resolve(import.meta.dir, "fixtures", "legacy-pi-extension-cjs-cache-probe.ts");
+const cjsGraphProbePath = path.resolve(import.meta.dir, "fixtures", "legacy-pi-cjs-graph-cache-probe.ts");
 const tempDirs: TempDir[] = [];
 
 async function runProbe(cacheRoot: string, script: string = probePath, args: string[] = []): Promise<string> {
@@ -66,6 +67,24 @@ test("warm CommonJS classification of type-less script dependencies does not rep
 
 	expect(await runProbe(cacheRoot, cjsProbePath, [entry])).toBe("42\n");
 	expect(await runProbe(cacheRoot, cjsProbePath, [entry, "--expect-cache-hit"])).toBe("42\n");
+});
+
+test("warm graph walk classifies CommonJS scripts without reparsing", async () => {
+	const tempDir = TempDir.createSync("@legacy-pi-extension-cache-cjs-");
+	tempDirs.push(tempDir);
+	const cacheRoot = path.join(tempDir.path(), "cache");
+	const packageRoot = path.join(tempDir.path(), "pkg");
+	await fs.mkdir(path.join(cacheRoot, "omp"), { recursive: true });
+	await fs.mkdir(packageRoot, { recursive: true });
+	// No `type` field: `.js` files are classified by scanning for CommonJS syntax.
+	await Bun.write(path.join(packageRoot, "package.json"), JSON.stringify({ name: "cjs-graph", version: "1.0.0" }));
+	await Bun.write(path.join(packageRoot, "index.ts"), 'import dep from "./dep.js";\nexport default dep;\n');
+	await Bun.write(path.join(packageRoot, "dep.js"), 'module.exports = require("./leaf.js");\n');
+	await Bun.write(path.join(packageRoot, "leaf.js"), "module.exports = 1;\n");
+	const entry = path.join(packageRoot, "index.ts");
+
+	expect(await runProbe(cacheRoot, cjsGraphProbePath, [entry])).toBe("3\n");
+	expect(await runProbe(cacheRoot, cjsGraphProbePath, [entry, "--expect-cache-hit"])).toBe("3\n");
 });
 
 test("legacy extension parse cache drops obsolete CommonJS export-analysis columns", async () => {

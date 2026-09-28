@@ -416,7 +416,9 @@ async function runExtensionFactory(
 async function importExtensionModule(extensionPath: string, cwd: string): Promise<PreparedExtension> {
 	const resolvedPath = resolvePath(extensionPath, cwd);
 	try {
-		const module = (await withHostGuard(() => loadLegacyPiModule(resolvedPath))) as LoadedExtensionModule;
+		const module = (await logger.time(`extension:import:${resolvedPath}`, () =>
+			withHostGuard(() => loadLegacyPiModule(resolvedPath)),
+		)) as LoadedExtensionModule;
 		const factory = getExtensionFactory(module);
 
 		if (typeof factory !== "function") {
@@ -449,7 +451,9 @@ async function bindExtension(
 	try {
 		const extension = createExtension(extensionPath, imported.resolvedPath);
 		const api = new ConcreteExtensionAPI(PiCodingAgent, extension, runtime, cwd, eventBus);
-		await withHostGuard(() => runExtensionFactory(factory, api, runtime));
+		await logger.time(`extension:bind:${path.basename(imported.resolvedPath)}`, () =>
+			withHostGuard(() => runExtensionFactory(factory, api, runtime)),
+		);
 
 		return { extension, error: null };
 	} catch (err) {

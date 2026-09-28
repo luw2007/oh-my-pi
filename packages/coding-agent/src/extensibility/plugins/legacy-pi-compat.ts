@@ -2115,6 +2115,13 @@ async function realpathOrSelf(p: string): Promise<string> {
 
 async function realpathOrSelfUncached(p: string): Promise<string> {
 	try {
+		// `realpath` opens the path on macOS, which endpoint security scanners
+		// intercept (~1ms each). Non-symlink entries reuse their parent's cached
+		// realpath so large graphs pay one full resolve per directory, not per file.
+		const parent = path.dirname(p);
+		if (parent !== p && !(await fs.promises.lstat(p)).isSymbolicLink()) {
+			return path.join(await realpathOrSelf(parent), path.basename(p));
+		}
 		return await fs.promises.realpath(p);
 	} catch {
 		return p;
@@ -2151,6 +2158,18 @@ async function collectExtensionModules(entryRealPath: string): Promise<Extension
 		moduleKind?: ExtensionModuleKind;
 		esmBranch?: boolean;
 	}> = [{ file: entryRealPath, cacheBustResolvedImports: true, moduleKind: "esm" }];
+	// First opens are slow under endpoint security scanners; reading relative
+	// imports concurrently overlaps that latency instead of paying it per file.
+	const sourceReads = new Map<string, Promise<string>>();
+	const readSource = (file: string): Promise<string> => {
+		let read = sourceReads.get(file);
+		if (!read) {
+			read = Bun.file(file).text();
+			read.catch(() => {});
+			sourceReads.set(file, read);
+		}
+		return read;
+	};
 	while (queue.length > 0) {
 		const item = queue.pop();
 		if (!item) {
@@ -2165,12 +2184,22 @@ async function collectExtensionModules(entryRealPath: string): Promise<Extension
 		}
 		let source: string;
 		try {
-			source = await Bun.file(file).text();
+			source = await readSource(file);
 		} catch {
 			continue;
 		}
 		modules.set(file, source);
 		const analysis = getExtensionSourceAnalysis(source, file);
+		const dir = path.dirname(file);
+		for (const reference of analysis.references) {
+			if (!reference.specifier.startsWith(".")) continue;
+			try {
+				const target = Bun.resolveSync(reference.specifier, dir);
+				if (hasSourceModuleExtension(target)) void readSource(target);
+			} catch {
+				// Resolution is repeated (and its failure handled) below.
+			}
+		}
 		const sourceIsCommonJs = await isGraphOwnedCommonJsModule(
 			file,
 			entryRealPath,
@@ -2181,7 +2210,6 @@ async function collectExtensionModules(entryRealPath: string): Promise<Extension
 			commonJsPaths.add(file);
 			commonJsGraphModulePaths.add(file);
 		}
-		const dir = path.dirname(file);
 		const references = analysis.references;
 		for (const reference of references) {
 			const specifier = reference.specifier;
