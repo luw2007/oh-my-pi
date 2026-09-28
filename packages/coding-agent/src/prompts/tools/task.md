@@ -1,39 +1,30 @@
-{{#if asyncEnabled}}{{#if batchEnabled}}Delegate background work via one `tasks[]` batch; IDs return immediately.{{else}}Delegate ONE background subagent; its ID returns immediately.{{/if}}{{#if hasBlockingAgents}} BLOCKING agents run inline; other batch items remain background.{{/if}}{{else}}{{#if batchEnabled}}Run a synchronous `tasks[]` batch.{{else}}Run ONE synchronous subagent.{{/if}}{{/if}}
+{{#if asyncEnabled}}{{#if batchEnabled}}Spawn `tasks[]` concurrently; IDs return immediately.{{else}}Spawn one agent; ID returns immediately.{{/if}}{{#if hasBlockingAgents}} BLOCKING agents return inline.{{/if}}{{else}}{{#if batchEnabled}}Run `tasks[]` synchronously.{{else}}Run one agent synchronously.{{/if}}{{/if}}
 {{#if asyncEnabled}}
 
-# Async contract
-- Results auto-deliver. If `hub jobs`/`wait` sees settlement first, that snapshot is delivery; no duplicate follows.
-- Job IDs are process-local: consumed rows expire ~30s after delivery; unconsumed rows remain up to five minutes. Later use agent ID with `hub send`, `agent://`, or `history://`.
-- `outputSchema` payloads live at `agent://<id>` (query fields with `?q=.<field>`), even after schema failure; invalid payloads also preview in the follow-up.
-- `completed` means agent exit, not acceptance. Verify its claims.
+# Results
+`outputSchema` parsed payload, even invalid: `agent://<id>` (field `/<field>`, nested `/reports/0/data`); invalid preview inline.
 {{/if}}
 
-# Design
-- The spawn-policy default (`{{defaultAgent}}`) is the best fit when omitted. Omit `agent` when the spawn-policy default is the best fit; NEVER pass that default explicitly.
-- Every assignment MUST be self-contained: exact target/non-goals, required changes/contracts, and observable acceptance. One-liners prohibited.
-- Tell every agent to skip formatters, linters, and project-wide tests; run validation once after integration.
-- Prefer one-pass investigate+edit.{{#if scoutAvailable}} Use a read-only scout only when affected files are genuinely unknown.{{/if}}
-- Parallelize independent ownership only. Same-file edits are not guaranteed to merge.{{#if ircEnabled}} Have siblings coordinate through `hub` before editing shared files.{{/if}} Name one integration owner; freeze shared interfaces in batch `context` and serialize the shared mutation boundary.
+# Delegation
+Use most specific agent.{{#if scoutAvailable}} Read-only research MUST use `scout` only when files unknown.{{/if}} Prefer one agent to investigate + edit. Omit `agent` only for default (`{{defaultAgent}}`); NEVER specify it.
+Shared edits need one integration owner{{#if ircEnabled}}; siblings coordinate via `write agent://<id>`{{/if}}. Set interfaces in {{#if batchEnabled}}`context`{{else}}the task{{/if}}. Every task MUST skip build/lint/tests/formatters mid-flight; run once afterward.
 
-# Batch contract
-{{#if batchEnabled}}`context`: shared Goal, Constraints, Contract. Do not repeat it per item.
-{{/if}}Each `task`:
-```
-# Target       exact files/symbols; non-goals
-# Change       steps, APIs, patterns
-# Acceptance   observable result; no project-wide commands
-```
-Subagents start blank.{{#if ircEnabled}} Parent IRC is immediate steering.{{/if}} Pass large inputs through `local://`, never inline.
-{{#if isolationEnabled}}`isolated`: dedicated worktree; {{#if applyIsolatedChanges}}successful edits auto-apply to parent.{{else}}edits remain as patch/branch artifacts.{{/if}}{{/if}}
-{{#if evalToolsEnabled}}`tools`: names of eval-defined tools exposed to the child.{{/if}}
-{{#if effortEnabled}}`effort`: `"lo"|"med"|"hi"`.{{/if}}
-`outputSchema` overrides agent/session schemas; `schemaMode`: permissive (default, may return invalid after retries) or strict (fail).
+# Inputs
+`name`: CamelCase ≤32, auto-generated if omitted; address agent by name. `outputSchema` overrides agent/session schemas.
+`solutionSpace`: describe how open-ended the child's problem is: whether the fix or design is given, or which causes or designs remain open. Volume of work does not widen it; NEVER mention sibling agents or coordination. (`one fix: rename, names given`; `one fix: slice end in paginate`; `single-flight cache load; races easy to miss`; `several retry API shapes; error classes to choose`; `deadlock cause open, no repro`)
+{{#if evalToolsEnabled}}`tools`: eval-defined, run in your kernel.
+{{/if}}{{#if effortEnabled}}`effort`: `"lo"`|`"med"`|`"hi"` by how open-ended the problem is.
+{{/if}}`schemaMode`: default permissive warns after retries; strict fails.
+{{#if isolationEnabled}}{{#if applyIsolatedChanges}}`isolated`: worktree; successful changes apply to parent.
+{{else}}`isolated`: worktree; changes retained, not applied.
+{{/if}}{{/if}}Children start blank;{{#if ircEnabled}} parent IRC steers immediately;{{/if}} large payloads via `local://<path>`, NEVER inline.
+
+# Format
+{{#if batchEnabled}}`context`: shared (`# Goal`, `# Contract` interfaces); NEVER repeat per task.
+{{/if}}`task`: self-contained (`# Target` files/non-goals, `# Change` steps/APIs, `# Acceptance` observable result).
 
 # Available Agents
-{{#if spawningDisabled}}Agent spawning is disabled.{{else}}Pick the most specific agent; omit `agent` only for the default.
-{{#if hasModelMentions}}`m<N>` agents are user-tagged models. Spawn only when the request names one; never replace a specialist automatically.
-{{/if}}{{#list agents join="\n"}}
-### {{name}}{{#if readOnly}} (READ-ONLY){{/if}}{{#if blocking}} (BLOCKING: inline result){{/if}}
-{{description}}
-{{#if readOnly}}Investigation only; edits stay with you or a writing agent.{{/if}}
+{{#if spawningDisabled}}Agent spawning is currently disabled.
+{{else}}{{#if hasModelMentions}}`m<N>` = user-tagged model (`<model agent="m<N>" name="…"/>`), not specialist; spawn only when user names it.
+{{/if}}{{#list agents join=""}}- `{{name}}`{{#if readOnly}} (READ-ONLY; investigation only, no edits){{/if}}{{#if blocking}} (BLOCKING; inline result){{/if}}: {{description}}
 {{/list}}{{/if}}
