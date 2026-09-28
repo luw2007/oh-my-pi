@@ -33,38 +33,43 @@ describe("autolearn tool gating", () => {
 		expect(names).not.toContain("manage_skill");
 	});
 
-	it("offers manage_skill but not learn when enabled with no memory backend", async () => {
+	it("keeps manage_skill opt-in when enabled without a memory backend", async () => {
 		const names = (await createTools(makeSession({ "autolearn.enabled": true, "memory.backend": "off" }))).map(
 			t => t.name,
 		);
-		expect(names).toContain("manage_skill");
+		expect(names).not.toContain("manage_skill");
 		expect(names).not.toContain("learn");
+
+		const requested = (
+			await createTools(makeSession({ "autolearn.enabled": true, "memory.backend": "off" }), ["manage_skill"])
+		).map(t => t.name);
+		expect(requested).toContain("manage_skill");
 	});
 
-	it("offers both tools, marked essential, when enabled with a live backend", async () => {
+	it("offers learn when enabled with a live backend and manage_skill when requested", async () => {
 		const tools = await createTools(makeSession({ "autolearn.enabled": true, "memory.backend": "mnemopi" }));
 		const learn = tools.find(t => t.name === "learn");
-		const manage = tools.find(t => t.name === "manage_skill");
 		expect(learn).toBeDefined();
-		expect(manage).toBeDefined();
-		// loadMode "essential" is what keeps them active under tools.discoveryMode "all".
+		expect(tools.find(t => t.name === "manage_skill")).toBeUndefined();
 		expect(learn?.loadMode).toBe("essential");
-		expect(manage?.loadMode).toBe("essential");
+
+		const requested = await createTools(makeSession({ "autolearn.enabled": true, "memory.backend": "mnemopi" }), [
+			"manage_skill",
+		]);
+		expect(requested.find(t => t.name === "manage_skill")).toBeDefined();
 	});
 
-	it("force-includes the tools into an explicit restricted toolNames list", async () => {
-		// A session created with autolearn on but a narrow tool list still gets the
-		// controller/guidance, so the tools the nudge points at must be present.
+	it("keeps manage_skill opt-in while retaining learn for a live backend", async () => {
 		const withBackend = (
 			await createTools(makeSession({ "autolearn.enabled": true, "memory.backend": "mnemopi" }), ["read"])
 		).map(t => t.name);
-		expect(withBackend).toContain("manage_skill");
+		expect(withBackend).not.toContain("manage_skill");
 		expect(withBackend).toContain("learn");
 
 		const noBackend = (
 			await createTools(makeSession({ "autolearn.enabled": true, "memory.backend": "off" }), ["read"])
 		).map(t => t.name);
-		expect(noBackend).toContain("manage_skill");
+		expect(noBackend).not.toContain("manage_skill");
 		expect(noBackend).not.toContain("learn");
 	});
 
@@ -104,12 +109,12 @@ describe("autolearn tool gating", () => {
 			t => t.name,
 		);
 		expect(names).toContain("learn");
-		expect(names).toContain("manage_skill");
+		expect(names).not.toContain("manage_skill");
 
-		// Force-included into an explicit restricted toolNames list too.
 		const restricted = (
 			await createTools(makeSession({ "autolearn.enabled": true, "memory.backend": "local" }), ["read"])
 		).map(t => t.name);
+		expect(restricted).not.toContain("manage_skill");
 		expect(restricted).toContain("learn");
 	});
 });

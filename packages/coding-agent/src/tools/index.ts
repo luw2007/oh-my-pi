@@ -721,20 +721,13 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (externalThinkingActive && !requestedTools.includes("think")) {
 			requestedTools.push("think");
 		}
-		// Auto-learn tools are gated by `autolearn.enabled` but, like the memory
-		// tools above, must also be force-included into an explicit requestedTools
-		// list so a restricted top-level session whose controller/guidance is
-		// active still exposes the tools the nudge points at. Gated to top-level
-		// (taskDepth 0): the controller only runs there, so a subagent's explicit
-		// tool whitelist must never be silently widened with write-capable tools.
-		if (cfgAutolearnEnabled.get(session.settings) && (session.taskDepth ?? 0) === 0) {
-			if (!requestedTools.includes("manage_skill")) requestedTools.push("manage_skill");
-			if (
-				["hindsight", "mnemopi", "local"].includes(cfgMemoryBackend.get(session.settings)) &&
-				!requestedTools.includes("learn")
-			) {
-				requestedTools.push("learn");
-			}
+		if (
+			cfgAutolearnEnabled.get(session.settings) &&
+			(session.taskDepth ?? 0) === 0 &&
+			["hindsight", "mnemopi", "local"].includes(cfgMemoryBackend.get(session.settings)) &&
+			!requestedTools.includes("learn")
+		) {
+			requestedTools.push("learn");
 		}
 	}
 	const isToolAllowed = (name: string) => {
@@ -761,7 +754,9 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "github") return cfgGithubEnabled.get(session.settings);
 		if (name === "ast_grep") return cfgAstGrepEnabled.get(session.settings);
 		if (name === "ast_edit") return cfgAstEditEnabled.get(session.settings);
-		if (name === "web_search") return cfgWebSearchEnabled.get(session.settings);
+		if (name === "web_search") {
+			return requestedTools?.includes("web_search") === true || cfgWebSearchEnabled.get(session.settings);
+		}
 		if (name === "security_scan") return cfgSecurityEnabled.get(session.settings);
 		if (name === "think") return externalThinkingActive;
 		if (name === "ask") return cfgAskEnabled.get(session.settings);
@@ -783,11 +778,9 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 			return ["hindsight", "mnemopi"].includes(cfgMemoryBackend.get(session.settings));
 		}
 		if (name === "memory_edit") return cfgMemoryBackend.get(session.settings) === "mnemopi";
-		if (name === "manage_skill")
-			return (
-				cfgAutolearnEnabled.get(session.settings) &&
-				((session.taskDepth ?? 0) === 0 || requestedTools !== undefined)
-			);
+		if (name === "manage_skill") {
+			return cfgAutolearnEnabled.get(session.settings) && requestedTools?.includes("manage_skill") === true;
+		}
 		if (name === "learn") {
 			return (
 				cfgAutolearnEnabled.get(session.settings) &&

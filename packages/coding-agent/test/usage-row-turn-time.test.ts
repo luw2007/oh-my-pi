@@ -162,7 +162,7 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 		expect(rendered).toContain(USAGE_LABEL);
 	});
 	it("includes effective thinking effort in rebuilt usage rows", () => {
-		settings.set("display.showTurnTime", false);
+		cfgDisplayShowTurnTime.set(settings, false);
 		const transcript = builder();
 		transcript.rebuild(toEntries([userMessage(), assistantMessage({ reasoningEffort: Effort.High })]));
 		expect(renderedText(transcript.container)).toContain("anthropic/claude-sonnet-4-5:high");

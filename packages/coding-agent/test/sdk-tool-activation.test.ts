@@ -89,7 +89,9 @@ describe("createAgentSession defaultInactive tool activation", () => {
 	beforeAll(async () => {
 		registryAuthDir = path.join(os.tmpdir(), `pi-sdk-tool-activation-auth-${Snowflake.next()}`);
 		fs.mkdirSync(registryAuthDir, { recursive: true });
-		modelRegistry = new ModelRegistry(await discoverAuthStorage(registryAuthDir));
+		modelRegistry = new ModelRegistry(await discoverAuthStorage(registryAuthDir), undefined, {
+			settings: Settings.isolated(),
+		});
 	});
 
 	// Shared options for every session. `rules: []` and `workspaceTree` short-circuit
@@ -2129,9 +2131,8 @@ describe("createAgentSession defaultInactive tool activation", () => {
 
 		try {
 			const activeToolNames = normal.getActiveToolNames();
-			expect(activeToolNames).toEqual(
-				expect.arrayContaining(["read", "yield", "generate_image", "learn", "manage_skill", "write"]),
-			);
+			expect(activeToolNames).toEqual(expect.arrayContaining(["read", "yield", "generate_image", "learn", "write"]));
+			expect(activeToolNames).not.toContain("manage_skill");
 			// Explicit and force-included tools stay top-level. Ambient custom and
 			// extension capabilities mount through the device-only write transport.
 			const mountedNames = normal.getXdevToolEntries().map(entry => entry.name);
@@ -2612,7 +2613,7 @@ describe("createAgentSession defaultInactive tool activation", () => {
 			try {
 				// The default advisor roster is read-only (read/grep/glob); the
 				// reviewed hole needs one actually granted a mutating tool.
-				session.applyAdvisorConfigs([{ name: "writer", tools: ["write"], model: "gpt-4o-mini" }], undefined);
+				session.applyAdvisorConfigs([{ name: "writer", tools: ["write"], model: "openai/gpt-5" }], undefined);
 				const advisor = session.getAdvisorAgent();
 				if (!advisor) throw new Error("expected an advisor agent");
 				const writeTool = advisor.state.tools?.find(tool => tool.name === "write");
@@ -2643,7 +2644,7 @@ describe("createAgentSession defaultInactive tool activation", () => {
 				toolNames: ["read"],
 			});
 			try {
-				session.applyAdvisorConfigs([{ name: "writer", tools: ["write"], model: "gpt-4o-mini" }], undefined);
+				session.applyAdvisorConfigs([{ name: "writer", tools: ["write"], model: "openai/gpt-5" }], undefined);
 				const advisor = session.getAdvisorAgent();
 				if (!advisor) throw new Error("expected an advisor agent");
 				const writeTool = advisor.state.tools?.find(tool => tool.name === "write");

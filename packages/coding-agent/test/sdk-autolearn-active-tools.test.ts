@@ -11,13 +11,10 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-sessi
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { removeSyncWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
 
-// Guards the auto-learn tool ACTIVATION wiring in createAgentSession: createTools
-// force-includes manage_skill into the built registry for an enabled top-level
-// session, but an explicit `toolNames` whitelist would otherwise drop it from the
-// active set — so the SDK must re-activate it (mirroring the `yield` invariant),
-// or the nudge/guidance would point at a tool the model cannot call. No memory
-// backend is configured (manage_skill needs only `autolearn.enabled`), so the
-// session starts without a heavy backend.
+// Guards the auto-learn tool activation wiring in createAgentSession: an explicit
+// `toolNames` whitelist keeps manage_skill opt-in while learn remains available
+// only when a live memory backend is configured. No memory backend is configured
+// in the first test, so the session must not expose manage_skill.
 describe("createAgentSession auto-learn tool activation", () => {
 	let registryDir: string;
 	let authStorage: AuthStorage;
@@ -64,12 +61,11 @@ describe("createAgentSession auto-learn tool activation", () => {
 		return session.getActiveToolNames();
 	}
 
-	it("activates force-included manage_skill in a restricted top-level session", async () => {
-		const names = await activeToolNames(Settings.isolated({ "autolearn.enabled": true }));
+	it("activates learn but not manage_skill with an explicit tool list", async () => {
+		const names = await activeToolNames(Settings.isolated({ "autolearn.enabled": true, "memory.backend": "local" }));
 		expect(names).toContain("read");
-		// Built by createTools' force-include AND activated by the SDK's explicit-list
-		// re-inclusion, so guidance/controller point at a callable tool.
-		expect(names).toContain("manage_skill");
+		expect(names).toContain("learn");
+		expect(names).not.toContain("manage_skill");
 	});
 
 	it("initializes the selected memory backend before an auto-learn session can run", async () => {

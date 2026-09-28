@@ -45,14 +45,13 @@ describe("createTools", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("creates all builtin tools by default", async () => {
+	it("creates default tools without opt-in web search", async () => {
 		// xdev mounting (default-on) would unmount discoverables like lsp and
-		// web_search into xd://; disable it to assert the full builtin set.
+		// web_search; disable it to assert the active built-in set directly.
 		const session = createTestSession({ settings: createSettingsWithOverrides({ "tools.xdev": false }) });
 		const tools = await createTools(session);
 		const names = tools.map(t => t.name);
 
-		// Core tools should always be present
 		expect(names).toContain("eval");
 		expect(names).toContain("bash");
 		expect(names).toContain("read");
@@ -63,7 +62,7 @@ describe("createTools", () => {
 		expect(names).toContain("lsp");
 		expect(names).toContain("task");
 		expect(names).toContain("todo");
-		expect(names).toContain("web_search");
+		expect(names).not.toContain("web_search");
 		expect(names).not.toContain("fetch");
 		expect(names).not.toContain("vim");
 	});
@@ -256,6 +255,27 @@ describe("createTools", () => {
 		// `write` joins as the device-only xd:// transport: read was granted,
 		// write omitted (see the "device-only xd:// transport write" test).
 		expect(requestedTools.map(t => t.name)).toEqual(["read", "write"]);
+	});
+	it("activates web search when explicitly requested while disabled by default", async () => {
+		const session = createTestSession({
+			settings: createSettingsWithOverrides({ "web_search.enabled": false }),
+		});
+		const tools = await createTools(session, ["web_search"]);
+
+		expect(tools.map(t => t.name)).toContain("web_search");
+	});
+
+	it("keeps manage_skill opt-in while retaining learn when enabled", async () => {
+		const settings = createSettingsWithOverrides({
+			"autolearn.enabled": true,
+			"memory.backend": "local",
+		});
+		const defaultTools = await createTools(createTestSession({ settings }));
+		expect(defaultTools.map(t => t.name)).toContain("learn");
+		expect(defaultTools.map(t => t.name)).not.toContain("manage_skill");
+
+		const requestedTools = await createTools(createTestSession({ settings }), ["manage_skill"]);
+		expect(requestedTools.map(t => t.name)).toContain("manage_skill");
 	});
 
 	it("auto-includes goal when goal mode is active", async () => {

@@ -1284,7 +1284,7 @@ const TOOL_DEFINITION_MARKER = Symbol("__isToolDefinition");
 /** Matches the truncation applied to per-server instructions inside `rebuildSystemPrompt`. */
 const MAX_MCP_INSTRUCTIONS_LENGTH = 4000;
 /** Built-ins `createTools` force-includes into explicit tool lists; the active set mirrors them. */
-const SESSION_MANAGED_BUILTIN_TOOL_NAMES = ["manage_skill", "learn", "context_notes", "new_context"];
+const SESSION_MANAGED_BUILTIN_TOOL_NAMES = ["learn", "context_notes", "new_context"];
 
 let sshCleanupRegistered = false;
 
@@ -3894,9 +3894,8 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		) {
 			explicitlyRequestedToolNames.push("yield");
 		}
-		// Session-managed builtins may be force-included by createTools. Keep the
-		// active set consistent with that registry decision, using built-in
-		// provenance so same-named extension tools are never force-activated.
+		// Session-managed tools that createTools force-includes must remain active
+		// for explicit SDK tool lists. manage_skill stays explicitly opt-in.
 		if (!restrictToolNames && explicitlyRequestedToolNames) {
 			for (const name of SESSION_MANAGED_BUILTIN_TOOL_NAMES) {
 				if (builtInToolNames.includes(name) && !explicitlyRequestedToolNames.includes(name)) {
@@ -3907,9 +3906,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// Checkpoint and rewind are a pair: `createTools` auto-includes the sister
 		// tool in the registry, but an explicit `toolNames` list would otherwise
 		// drop it from the ACTIVE set — leaving the agent able to checkpoint but
-		// unable to rewind (or vice versa). Mirror the pairing here. Unlike the
-		// manage_skill/learn mirror above, this is a safety pairing — it applies
-		// to restricted sessions too.
+		// unable to rewind (or vice versa). Mirror the pairing here.
 		if (explicitlyRequestedToolNames) {
 			if (builtInToolNames.includes("checkpoint") && !explicitlyRequestedToolNames.includes("rewind")) {
 				explicitlyRequestedToolNames.push("rewind");

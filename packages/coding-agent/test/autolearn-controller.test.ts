@@ -506,19 +506,23 @@ describe("isolated auto-learn capture", () => {
 });
 
 describe("buildAutoLearnInstructions", () => {
-	it("returns null when manage_skill is not in the active tool set", () => {
+	it("returns null when no auto-learn tool is active", () => {
 		expect(buildAutoLearnInstructions({ manageSkill: false, learn: false })).toBeNull();
-		// learn without manage_skill still yields no guidance (manage_skill gates it).
-		expect(buildAutoLearnInstructions({ manageSkill: false, learn: true })).toBeNull();
 	});
 
-	it("includes the learn addendum when the learn tool is present", () => {
+	it("includes the learn addendum when only learn is active", () => {
+		const text = buildAutoLearnInstructions({ manageSkill: false, learn: true });
+		expect(text).toContain("long-term memory");
+		expect(text).not.toContain("manage_skill");
+	});
+
+	it("includes both guidance sections when both tools are active", () => {
 		const text = buildAutoLearnInstructions({ manageSkill: true, learn: true });
 		expect(text).toContain("manage_skill");
 		expect(text).toContain("long-term memory");
 	});
 
-	it("omits the learn addendum when only manage_skill is present", () => {
+	it("omits the learn addendum when only manage_skill is active", () => {
 		const text = buildAutoLearnInstructions({ manageSkill: true, learn: false });
 		expect(text).toContain("manage_skill");
 		expect(text).not.toContain("long-term memory");
