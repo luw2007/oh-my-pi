@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `readTextFromClipboard()` to read plain clipboard text without starting a subprocess ([#13991](https://github.com/can1357/oh-my-pi/pull/13991) by [@H4vC](https://github.com/H4vC))
+- Added `Shell.pids()`, which returns the pids of the processes the in-flight `run` spawned that are still alive
+
+## [18.4.7] - 2026-10-01
+
+### Fixed
+
+- Fixed omp 18.4.3 and later crashing with a segmentation fault at startup on Apple silicon Macs running macOS older than 27; Apple Foundation Models support now loads only on macOS 27 and later
+
 ## [18.4.5] - 2026-09-30
 
 ### Fixed
