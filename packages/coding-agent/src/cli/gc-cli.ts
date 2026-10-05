@@ -9,27 +9,36 @@ import {
 	formatBytes,
 	getAgentDir,
 	getBlobsDir,
+	getConfigRootDir,
 	getCustomSessionFilesDir,
 	getHistoryDbPath,
 	getModelDbPath,
+	getReportsDir,
 	getSessionsDir,
 	getStatsDbPath,
 	getTerminalSessionsDir,
+	hashPath,
 	normalizePathForComparison,
 	readLines,
+	type FileLockHandle,
 } from "@oh-my-pi/pi-utils";
 import { Settings } from "../config/settings";
 import type { Setting } from "../config/registry";
 
 import { BLOB_HASH_RE, BLOB_STAGING_RE, blobStagingPath } from "../session/blob-store";
 import { listSessionsReadOnly, type SessionInfo, type SessionStatus } from "../session/session-listing";
-import { FileSessionStorage } from "../session/session-storage";
+import { parseTerminalBreadcrumb } from "../session/session-paths";
+import { readSessionHeaderId } from "../session/session-loader";
+import { FileSessionStorage, tryAcquireSessionLease } from "../session/session-storage";
 import {
 	cfgGcArchive,
 	cfgGcBlobs,
 	cfgGcColdArchiveAfterDays,
 	cfgGcRetainNewestGlobal,
 	cfgGcRetainNewestPerCwd,
+	cfgGcStale,
+	cfgGcStaleRetainDays,
+	cfgGcStaleRetainNewest,
 	cfgGcWal,
 } from "./gc-settings";
 
@@ -44,6 +53,13 @@ const GC_WRITE_GRACE_MS = 5 * 60_000;
 const SESSION_SUFFIX = ".jsonl";
 const COMPRESSED_SESSION_SUFFIX = ".jsonl.gz";
 const GC_LOCK_BREAKER_SUFFIX = ".break";
+/**
+ * Minimum age before a dangling session pointer is pruned. A lazy session's
+ * marker and fresh breadcrumb name a transcript that is not on disk until its
+ * first turn, so an idle-but-open session must keep them well past the
+ * write grace.
+ */
+const STALE_POINTER_GRACE_MS = DAY_MS;
 
 export interface GcCommandFlags {
 	apply?: boolean;
@@ -52,9 +68,12 @@ export interface GcCommandFlags {
 	blobs?: boolean;
 	archive?: boolean;
 	wal?: boolean;
+	stale?: boolean;
 	coldArchiveAfterDays?: number;
 	retainNewestGlobal?: number;
 	retainNewestPerCwd?: number;
+	staleRetainNewest?: number;
+	staleRetainDays?: number;
 }
 
 export interface GcCommandArgs {
@@ -100,9 +119,25 @@ export interface WalGcResult {
 	checkpointed: boolean;
 }
 
+export interface StaleGcResult {
+	/** Custom-session-file markers whose recorded transcript is gone. */
+	danglingMarkers: number;
+	/** Terminal breadcrumbs whose session file is gone. */
+	staleBreadcrumbs: number;
+	/** Debug report bundles beyond the retention window. */
+	expiredReports: number;
+	/** Collab guest replicas beyond the retention window. */
+	expiredReplicas: number;
+	wouldDelete: number;
+	deleted: number;
+	bytes: number;
+	errors: string[];
+}
+
 export interface GcResult {
 	agentDir: string;
 	apply: boolean;
+	stale?: StaleGcResult;
 	blobs?: BlobGcResult;
 	archive?: ArchiveGcResult;
 	wal?: WalGcResult;
@@ -140,9 +175,12 @@ interface ResolvedGcOptions {
 	runBlobs: boolean;
 	runArchive: boolean;
 	runWal: boolean;
+	runStale: boolean;
 	coldArchiveAfterDays: number;
 	retainNewestGlobal: number;
 	retainNewestPerCwd: number;
+	staleRetainNewest: number;
+	staleRetainDays: number;
 }
 
 interface SqliteRunResult {
@@ -176,15 +214,18 @@ function numberSetting(value: number | undefined, fallback: unknown, defaultValu
 
 async function resolveOptions(flags: GcCommandFlags): Promise<ResolvedGcOptions> {
 	const agentDir = path.resolve(flags.agentDir ?? getAgentDir());
-	const selected = flags.blobs === true || flags.archive === true || flags.wal === true;
+	const selected = flags.blobs === true || flags.archive === true || flags.wal === true || flags.stale === true;
 	const archiveSelected = selected && flags.archive === true;
+	const staleSelected = selected && flags.stale === true;
 	const needsArchiveSettings =
 		archiveSelected &&
 		(flags.coldArchiveAfterDays === undefined ||
 			flags.retainNewestGlobal === undefined ||
 			flags.retainNewestPerCwd === undefined);
+	const needsStaleSettings =
+		staleSelected && (flags.staleRetainNewest === undefined || flags.staleRetainDays === undefined);
 	const settings =
-		!selected || needsArchiveSettings
+		!selected || needsArchiveSettings || needsStaleSettings
 			? flags.apply === true
 				? await Settings.loadIsolated({ agentDir })
 				: await Settings.loadReadOnly({ agentDir })
@@ -197,6 +238,7 @@ async function resolveOptions(flags: GcCommandFlags): Promise<ResolvedGcOptions>
 		runBlobs: selected ? flags.blobs === true : read(cfgGcBlobs),
 		runArchive: selected ? flags.archive === true : read(cfgGcArchive),
 		runWal: selected ? flags.wal === true : read(cfgGcWal),
+		runStale: selected ? flags.stale === true : read(cfgGcStale),
 		coldArchiveAfterDays: numberSetting(
 			flags.coldArchiveAfterDays,
 			read(cfgGcColdArchiveAfterDays),
@@ -212,11 +254,18 @@ async function resolveOptions(flags: GcCommandFlags): Promise<ResolvedGcOptions>
 			read(cfgGcRetainNewestPerCwd),
 			cfgGcRetainNewestPerCwd.default,
 		),
+		staleRetainNewest: numberSetting(
+			flags.staleRetainNewest,
+			read(cfgGcStaleRetainNewest),
+			cfgGcStaleRetainNewest.default,
+		),
+		staleRetainDays: numberSetting(flags.staleRetainDays, read(cfgGcStaleRetainDays), cfgGcStaleRetainDays.default),
 	};
 }
 
 export function collectGcErrors(result: GcResult): string[] {
 	return [
+		...(result.stale?.errors ?? []).map(error => `stale: ${error}`),
 		...(result.blobs?.errors ?? []).map(error => `blobs: ${error}`),
 		...(result.archive?.errors ?? []).map(error => `archive: ${error}`),
 	];
@@ -546,6 +595,183 @@ async function runBlobGc(options: ResolvedGcOptions, archiveSessionsRoot: string
 	return result;
 }
 
+interface StaleCandidate {
+	kind: "danglingMarkers" | "staleBreadcrumbs" | "expiredReports" | "expiredReplicas";
+	/** Removed together; the first path is the entry itself. */
+	paths: string[];
+	bytes: number;
+	/** Session file whose ownership lease must be free (no running writer) to remove it. */
+	ownedSession?: string;
+}
+
+/**
+ * Config-root stores (`reports/`, `collab/`) live beside the agent dir, not in
+ * it. The default agent dir resolves them through the dirs resolver (XDG-aware);
+ * a custom agent dir named `agent` owns its parent as config root; any other
+ * custom agent dir has no config root for gc to maintain.
+ */
+function resolveConfigRootStores(agentDir: string): { reportsDir: string; collabDir: string } | undefined {
+	const configRoot = getConfigRootDir();
+	if (normalizePathForComparison(agentDir) === normalizePathForComparison(path.join(configRoot, "agent"))) {
+		return { reportsDir: getReportsDir(), collabDir: path.join(configRoot, "collab") };
+	}
+	if (path.basename(agentDir) !== "agent") return undefined;
+	const root = path.dirname(agentDir);
+	return { reportsDir: path.join(root, "reports"), collabDir: path.join(root, "collab") };
+}
+
+async function listFilesIfPresent(dir: string): Promise<string[]> {
+	try {
+		const entries = await fs.readdir(dir, { withFileTypes: true });
+		return entries.filter(entry => entry.isFile()).map(entry => path.join(dir, entry.name));
+	} catch (error) {
+		if (codeOf(error) === "ENOENT") return [];
+		throw error;
+	}
+}
+
+/** Whether a pointer's target is verifiably gone; unreadable targets count as present. */
+async function sessionFileMissing(sessionFile: string): Promise<boolean> {
+	try {
+		return !(await fs.stat(sessionFile)).isFile();
+	} catch (error) {
+		const code = codeOf(error);
+		return code === "ENOENT" || code === "ENOTDIR";
+	}
+}
+
+/**
+ * Pointer files (custom-session markers, terminal breadcrumbs) past
+ * {@link STALE_POINTER_GRACE_MS} whose recorded session file is gone.
+ * `resolveTarget` returns undefined for unparsable pointers, which are kept.
+ */
+async function collectDanglingPointers(
+	dir: string,
+	kind: StaleCandidate["kind"],
+	resolveTarget: (text: string) => string | undefined,
+): Promise<StaleCandidate[]> {
+	const deleteBeforeMs = Date.now() - STALE_POINTER_GRACE_MS;
+	const candidates: StaleCandidate[] = [];
+	for (const file of await listFilesIfPresent(dir)) {
+		const stat = await statIfPresent(file);
+		if (!stat || stat.mtimeMs > deleteBeforeMs) continue;
+		const target = resolveTarget(await readTextIfPresent(file));
+		if (!target || !(await sessionFileMissing(target))) continue;
+		candidates.push({ kind, paths: [file], bytes: stat.size });
+	}
+	return candidates;
+}
+
+/**
+ * Files beyond the newest `retainNewest` that are also older than
+ * `retainDays` (and never inside the write grace).
+ */
+async function collectExpiredFiles(
+	dir: string,
+	suffix: string,
+	options: ResolvedGcOptions,
+): Promise<Array<{ file: string; bytes: number }>> {
+	const files: Array<{ file: string; bytes: number; mtimeMs: number }> = [];
+	for (const file of await listFilesIfPresent(dir)) {
+		if (!file.endsWith(suffix)) continue;
+		const stat = await statIfPresent(file);
+		if (stat) files.push({ file, bytes: stat.size, mtimeMs: stat.mtimeMs });
+	}
+	files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+	const deleteBeforeMs = Date.now() - Math.max(options.staleRetainDays * DAY_MS, GC_WRITE_GRACE_MS);
+	return files.slice(options.staleRetainNewest).filter(entry => entry.mtimeMs < deleteBeforeMs);
+}
+
+async function runStaleGc(options: ResolvedGcOptions): Promise<StaleGcResult> {
+	const markersDir = getCustomSessionFilesDir(options.agentDir);
+	const breadcrumbDir = getTerminalSessionsDir(options.agentDir);
+	const candidates: StaleCandidate[] = [
+		...(await collectDanglingPointers(markersDir, "danglingMarkers", text => {
+			const recorded = text.trim();
+			return recorded ? path.resolve(recorded) : undefined;
+		})),
+		...(await collectDanglingPointers(breadcrumbDir, "staleBreadcrumbs", text => {
+			const crumb = parseTerminalBreadcrumb(text);
+			// A fresh crumb is a lazy `/new` boundary that `--continue` honors
+			// before its transcript exists. It stays until the session materializes
+			// (rewriting it non-fresh) or the terminal's next session replaces it.
+			if (!crumb || crumb.fresh) return undefined;
+			const cwd = crumb.cwd.trim();
+			const sessionFile = crumb.sessionFile.trim();
+			return cwd && sessionFile ? path.resolve(cwd, sessionFile) : undefined;
+		})),
+	];
+	const stores = resolveConfigRootStores(options.agentDir);
+	if (stores) {
+		for (const { file, bytes } of await collectExpiredFiles(stores.reportsDir, ".tar.gz", options)) {
+			candidates.push({ kind: "expiredReports", paths: [file], bytes });
+		}
+		// A replica a terminal's breadcrumb points at is what `--continue` resumes
+		// there; one a running guest holds is skipped at removal (ownership lease).
+		const resumable = new Set(
+			(await collectBreadcrumbSessionFiles(breadcrumbDir)).map(file => normalizePathForComparison(file)),
+		);
+		for (const { file, bytes } of await collectExpiredFiles(stores.collabDir, SESSION_SUFFIX, options)) {
+			if (resumable.has(normalizePathForComparison(file))) continue;
+			candidates.push({
+				kind: "expiredReplicas",
+				// The replica's custom-session marker would only dangle once it is gone.
+				paths: [file, sessionArtifactsPath(file), path.join(markersDir, hashPath(file))],
+				bytes,
+				ownedSession: file,
+			});
+		}
+	}
+
+	const result: StaleGcResult = {
+		danglingMarkers: 0,
+		staleBreadcrumbs: 0,
+		expiredReports: 0,
+		expiredReplicas: 0,
+		wouldDelete: 0,
+		deleted: 0,
+		bytes: 0,
+		errors: [],
+	};
+	for (const candidate of candidates) {
+		const lease = candidate.ownedSession ? await tryAcquireSessionFileLease(candidate.ownedSession) : undefined;
+		if (lease === null) continue;
+		try {
+			result[candidate.kind] += 1;
+			result.wouldDelete += 1;
+			result.bytes += candidate.bytes;
+			if (!options.apply) continue;
+			try {
+				for (const target of candidate.paths) await fs.rm(target, { recursive: true, force: true });
+				result.deleted += 1;
+			} catch (error) {
+				result.errors.push(`${candidate.paths[0]}: ${errorMessage(error)}`);
+			}
+		} finally {
+			// Held through the removal so a guest cannot reopen the replica mid-delete.
+			lease?.release();
+		}
+	}
+	return result;
+}
+
+/**
+ * Take the ownership lease of the session in `sessionFile`, or null while a
+ * running process holds it (or the lease cannot be probed: an unknown owner is
+ * treated as live). The lease is keyed by the header's session id. Undefined
+ * when the file has no session header: omp writes the header with the first
+ * bytes of a session, so no running writer owns such a file (and candidates
+ * are past the write grace, so none is mid-write).
+ */
+async function tryAcquireSessionFileLease(sessionFile: string): Promise<FileLockHandle | null | undefined> {
+	try {
+		const sessionId = await readSessionHeaderId(sessionFile);
+		return sessionId === undefined ? undefined : tryAcquireSessionLease(sessionId);
+	} catch {
+		return null;
+	}
+}
+
 async function listActiveSessions(sessionsRoot: string): Promise<SessionInfo[]> {
 	let entries: Array<{ name: string; isDirectory(): boolean }>;
 	try {
@@ -775,16 +1001,13 @@ function sqliteNumber(value: number | bigint | null | undefined): number {
 	return 0;
 }
 
+// Every statement below is scoped with `using`: an unfinalized statement keeps the SQLite
+// connection (and its db/-wal/-shm files) open after close() until GC, and Windows refuses
+// to delete or replace a file that is still open.
 function tableExists(db: Database, table: string): boolean {
-	const row = db
-		.prepare("SELECT 1 AS present FROM sqlite_master WHERE type IN ('table','view') AND name = ?")
-		.get(table) as { present?: number } | null;
+	using stmt = db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type IN ('table','view') AND name = ?");
+	const row = stmt.get(table) as { present?: number } | null;
 	return row?.present === 1;
-}
-
-function historyHasSessionId(db: Database): boolean {
-	const rows = db.prepare("PRAGMA table_info(history)").all() as Array<{ name?: string | null }>;
-	return rows.some(row => row.name === "session_id");
 }
 
 function deleteHistoryRowsForSessions(dbPath: string, sessionIds: string[]): { deleted: number; ftsRebuilt: boolean } {
@@ -792,13 +1015,13 @@ function deleteHistoryRowsForSessions(dbPath: string, sessionIds: string[]): { d
 	const db = new Database(dbPath);
 	try {
 		db.run("PRAGMA busy_timeout = 5000");
-		const hasHistory = tableExists(db, "history") && historyHasSessionId(db);
+		const hasHistory = tableExists(db, "history") && tableHasColumn(db, "history", "session_id");
 		const hasRecaps = tableExists(db, "session_recaps");
 		if (!hasHistory && !hasRecaps) return { deleted: 0, ftsRebuilt: false };
 		const hasFts = hasHistory && tableExists(db, "history_fts");
-		const deleteStmt = hasHistory ? db.prepare("DELETE FROM history WHERE session_id = ?") : undefined;
+		using deleteStmt = hasHistory ? db.prepare("DELETE FROM history WHERE session_id = ?") : undefined;
 		// Recaps are session-scoped side output with no life beyond their session.
-		const deleteRecapsStmt = hasRecaps ? db.prepare("DELETE FROM session_recaps WHERE session_id = ?") : undefined;
+		using deleteRecapsStmt = hasRecaps ? db.prepare("DELETE FROM session_recaps WHERE session_id = ?") : undefined;
 		let deleted = 0;
 		const tx = db.transaction((ids: string[]) => {
 			for (const id of ids) {
@@ -918,7 +1141,8 @@ function statsIdentityKeys(identities: Record<StatsEntryTable, StatsEntryIdentit
 }
 
 function tableHasColumn(db: Database, table: string, column: string): boolean {
-	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string | null }>;
+	using stmt = db.prepare(`PRAGMA table_info(${table})`);
+	const rows = stmt.all() as Array<{ name?: string | null }>;
 	return rows.some(row => row.name === column);
 }
 
@@ -926,7 +1150,8 @@ function collectStoredStatsSessionPaths(db: Database): string[] {
 	const sessionPaths = new Set<string>();
 	for (const table of STATS_SESSION_TABLES) {
 		if (!tableExists(db, table) || !tableHasColumn(db, table, "session_file")) continue;
-		const rows = db.prepare(`SELECT DISTINCT session_file FROM ${table}`).all() as Array<{
+		using stmt = db.prepare(`SELECT DISTINCT session_file FROM ${table}`);
+		const rows = stmt.all() as Array<{
 			session_file?: string | null;
 		}>;
 		for (const row of rows) {
@@ -1264,12 +1489,15 @@ function reconcileStatsRowsForSessions(dbPath: string, plans: StatsCleanupPlan[]
 				PRIMARY KEY (table_name, entry_id, timestamp, tool_call_id)
 			)
 		`);
-		const clearRetainedEntries = db.prepare("DELETE FROM gc_retained_entries");
-		const insertRetainedEntry = db.prepare(`
+		using statements = new DisposableStack();
+		const clearRetainedEntries = statements.use(db.prepare("DELETE FROM gc_retained_entries"));
+		const insertRetainedEntry = statements.use(
+			db.prepare(`
 			INSERT OR IGNORE INTO gc_retained_entries (
 				table_name, entry_id, timestamp, tool_call_id, target_session_file
 			) VALUES (?, ?, ?, ?, ?)
-		`);
+		`),
+		);
 		const transferStatements = entryTables.map(table => {
 			const toolCallMatch =
 				table === "tool_calls" ? `retained.tool_call_id = ${table}.tool_call_id` : "retained.tool_call_id = ''";
@@ -1279,7 +1507,8 @@ function reconcileStatsRowsForSessions(dbPath: string, plans: StatsCleanupPlan[]
 				AND retained.timestamp = ${table}.timestamp
 				AND ${toolCallMatch}
 			`;
-			return db.prepare(`
+			return statements.use(
+				db.prepare(`
 				UPDATE OR IGNORE ${table}
 				SET session_file = (
 					SELECT retained.target_session_file
@@ -1292,11 +1521,14 @@ function reconcileStatsRowsForSessions(dbPath: string, plans: StatsCleanupPlan[]
 						FROM gc_retained_entries AS retained
 						WHERE ${identityMatch}
 					)
-			`);
+			`),
+			);
 		});
 		const deletionStatements = sessionTables.map(table => ({
 			table,
-			statement: db.prepare(`DELETE FROM ${table} WHERE session_file = ? OR instr(session_file, ?) = 1`),
+			statement: statements.use(
+				db.prepare(`DELETE FROM ${table} WHERE session_file = ? OR instr(session_file, ?) = 1`),
+			),
 		}));
 		let deleted = 0;
 		const tx = db.transaction((cleanupPlans: StatsCleanupPlan[]) => {
@@ -1533,7 +1765,8 @@ async function checkpointWal(dbPath: string, apply: boolean): Promise<WalCheckpo
 	let checkpointAttempted = false;
 	try {
 		db.run("PRAGMA busy_timeout = 5000");
-		const row = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as WalCheckpointRow | null;
+		using checkpointStmt = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)");
+		const row = checkpointStmt.get() as WalCheckpointRow | null;
 		checkpointAttempted = true;
 		result.busy = sqliteNumber(row?.busy);
 		result.log = sqliteNumber(row?.log);
@@ -1747,6 +1980,13 @@ async function withGcLock<T>(agentDir: string, fn: (lockPath: string) => Promise
 
 function renderText(result: GcResult): string {
 	const lines = [`GC ${result.apply ? "applied" : "dry-run"} (${result.agentDir})`];
+	if (result.stale) {
+		const stale = result.stale;
+		lines.push(
+			`stale: ${stale.deleted}/${stale.wouldDelete} entries, ${formatBytes(stale.bytes)} (${stale.danglingMarkers} session markers, ${stale.staleBreadcrumbs} breadcrumbs, ${stale.expiredReports} reports, ${stale.expiredReplicas} collab replicas)`,
+		);
+		if (stale.errors.length > 0) lines.push(`stale errors: ${stale.errors.length}`);
+	}
 	if (result.blobs) {
 		lines.push(
 			`blobs: ${result.blobs.deleted}/${result.blobs.wouldDelete} files, ${formatBytes(result.blobs.bytes)}, ${result.blobs.referenced} refs`,
@@ -1772,6 +2012,8 @@ export async function runGcCommand(args: GcCommandArgs): Promise<GcResult> {
 	const archiveRoot = getArchivedSessionsDir(options.agentDir);
 	const result = await withGcLock(options.agentDir, async lockPath => {
 		const next: GcResult = { agentDir: options.agentDir, apply: options.apply, lockPath };
+		// Stale state first: pruned collab replicas then release their blobs to this run's sweep.
+		if (options.runStale) next.stale = await runStaleGc(options);
 		if (options.runBlobs) next.blobs = await runBlobGc(options, archiveRoot);
 		if (options.runArchive) next.archive = await runArchiveGc(options, archiveRoot);
 		if (options.runWal) next.wal = await runWalGc(options);
