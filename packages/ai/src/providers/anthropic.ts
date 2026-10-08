@@ -2617,6 +2617,8 @@ const streamAnthropicOnce = (
 					} finally {
 						if (requestTimeout !== undefined) clearTimeout(requestTimeout);
 					}
+					output.upstreamModel = response.headers.get("x-magpie-model") || output.upstreamModel;
+					output.upstreamProvider = response.headers.get("x-magpie-provider") || output.upstreamProvider;
 					await notifyProviderResponse(options, response, model, requestId);
 					if (slowMode) {
 						const slowSignal = parseAnthropicSlowModeHeaders(response.headers);

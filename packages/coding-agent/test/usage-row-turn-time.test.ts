@@ -134,6 +134,17 @@ describe("formatUsageRow turn elapsed", () => {
 		expect(row).toContain("codex_gpt/gpt-5.6-terra:high");
 		expect(formatUsageModel("codex_gpt", "gpt-5.6-terra")).toBe("codex_gpt/gpt-5.6-terra");
 	});
+
+	it("shows only Magpie's canonical served identity without inventing requested effort", () => {
+		for (const actual of ["traex/gpt-5.6-luna:medium", "traex/gpt-5.6-luna"]) {
+			const label = formatUsageModel("magpie", "group/iq-task", Effort.High, actual);
+			expect(label).toBe(actual);
+			expect(formatUsageRow(assistantMessage().usage as Usage, undefined, undefined, undefined, undefined, label)).toContain(actual);
+		}
+		expect(formatUsageModel("magpie", "group/iq-task", Effort.High)).toBe("magpie/group/iq-task:high");
+		expect(formatUsageModel("magpie", "group/iq-task", Effort.High, "gpt-5.6-luna")).toBe("magpie/group/iq-task:high");
+		expect(formatUsageModel("openrouter", "requested", Effort.High, "traex/actual")).toBe("openrouter/requested:high");
+	});
 });
 
 describe("ChatTranscriptBuilder turn elapsed", () => {
@@ -166,6 +177,39 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 		const transcript = builder();
 		transcript.rebuild(toEntries([userMessage(), assistantMessage({ reasoningEffort: Effort.High })]));
 		expect(renderedText(transcript.container)).toContain("anthropic/claude-sonnet-4-5:high");
+	});
+
+	it("replays Magpie's persisted served identity instead of its route and requested effort", async () => {
+		const message = assistantMessage({
+			provider: "magpie",
+			model: "group/iq-task",
+			reasoningEffort: Effort.High,
+			upstreamModel: "traex/gpt-5.6-luna:medium",
+			upstreamProvider: "traex",
+		});
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-magpie-replay-"));
+		const manager = SessionManager.create(process.cwd(), dir);
+		let reopened: SessionManager | undefined;
+		try {
+			manager.appendMessage({ role: "user", content: "build it", timestamp: PROMPT_AT });
+			manager.appendMessage(message);
+			await manager.ensureOnDisk();
+			await manager.close();
+			reopened = await SessionManager.open(manager.getSessionFile()!, dir);
+			const entries = reopened.getEntries();
+			const saved = entries.find(entry => entry.type === "message" && entry.message.role === "assistant");
+			expect(saved?.type === "message" && saved.message.role === "assistant" && saved.message.upstreamProvider).toBe("traex");
+			const transcript = builder();
+			transcript.rebuild(entries);
+			const rendered = renderedText(transcript.container);
+			expect(rendered).toContain("traex/gpt-5.6-luna:medium");
+			expect(rendered).not.toContain("magpie/group/iq-task");
+			expect(rendered).not.toContain("luna:medium:high");
+		} finally {
+			await reopened?.close();
+			await manager.close();
+			removeSyncWithRetries(dir);
+		}
 	});
 
 	it("hides the delta when display.showTurnTime is off", () => {
@@ -330,6 +374,18 @@ describe("UiHelpers.renderSessionContext turn elapsed", () => {
 		expect(rendered).toContain(USAGE_LABEL);
 	});
 
+	it("renders Magpie's actual model when rebuilding session context", () => {
+		const { ctx, helpers } = makeHarness(false);
+		helpers.renderSessionContext({ messages: [userMessage(), assistantMessage({
+			provider: "magpie", model: "group/iq-task", reasoningEffort: Effort.High,
+			upstreamModel: "traex/gpt-5.6-luna",
+		})] } as SessionContext);
+		const rendered = renderedText(ctx.chatContainer);
+		expect(rendered).toContain("traex/gpt-5.6-luna");
+		expect(rendered).not.toContain("magpie/group/iq-task");
+		expect(rendered).not.toContain("luna:high");
+	});
+
 	it("omits the delta when display.showTurnTime is off", () => {
 		const { ctx, helpers } = makeHarness(false);
 		helpers.renderSessionContext({ messages: [userMessage(), assistantMessage()] } as SessionContext);
@@ -400,6 +456,18 @@ describe("focus-attach mid-turn keeps the prompt→yield delta", () => {
 		const { controller, chatContainer } = createFixture();
 		await driveAssistantTurn(controller, assistantMessage({ reasoningEffort: Effort.High }));
 		expect(renderedText(chatContainer)).toContain("anthropic/claude-sonnet-4-5:high");
+	});
+
+	it("renders Magpie's actual model on live message_end", async () => {
+		const { controller, chatContainer } = createFixture();
+		await driveAssistantTurn(controller, assistantMessage({
+			provider: "magpie", model: "group/iq-task", reasoningEffort: Effort.High,
+			upstreamModel: "traex/gpt-5.6-luna:medium",
+		}));
+		const rendered = renderedText(chatContainer);
+		expect(rendered).toContain("traex/gpt-5.6-luna:medium");
+		expect(rendered).not.toContain("magpie/group/iq-task");
+		expect(rendered).not.toContain("medium:high");
 	});
 
 	it("clears a stale prompt anchor for a synthetic-only run", async () => {

@@ -944,6 +944,8 @@ const streamOpenAICompletionsOnce = (
 						},
 					});
 					responseHeaders = response.headers;
+					output.upstreamModel = response.headers.get("x-magpie-model") || output.upstreamModel;
+					output.upstreamProvider = response.headers.get("x-magpie-provider") || output.upstreamProvider;
 					// Disarm the first-event watchdog as soon as headers arrive — a slow
 					// onResponse callback must not abort an already-connected stream.
 					clearTimeout(requestTimeout);

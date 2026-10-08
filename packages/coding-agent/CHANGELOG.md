@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Live and restored Magpie response stats display the gateway's actual served model instead of its requested group route, without appending a requested effort that the router may not have used.
+
 ## [18.8.4] - 2026-10-08
 
 ### Changed

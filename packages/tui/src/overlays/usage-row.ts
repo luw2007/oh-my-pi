@@ -39,8 +39,14 @@ export function turnElapsedMs(
 	return elapsed > 0 ? Math.round(elapsed) : undefined;
 }
 
-/** Configured provider, requested model, and effective thinking effort shown in usage telemetry. */
-export function formatUsageModel(provider: string, model: string, reasoningEffort?: Effort): string {
+/** Magpie's canonical served identity, or the configured model and effective thinking effort. */
+export function formatUsageModel(
+	provider: string,
+	model: string,
+	reasoningEffort?: Effort,
+	upstreamModel?: string,
+): string {
+	if (provider === "magpie" && upstreamModel?.includes("/")) return upstreamModel;
 	return `${provider}/${model}${reasoningEffort ? `:${reasoningEffort}` : ""}`;
 }
 

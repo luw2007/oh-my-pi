@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI Completions, OpenAI Responses, and Anthropic streams retain Magpie's canonical `X-Magpie-Model` and `X-Magpie-Provider` response headers as upstream metadata without changing the requested routing identity.
+
 ## [18.8.4] - 2026-10-08
 
 ### Breaking Changes
