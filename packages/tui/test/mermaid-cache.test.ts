@@ -22,6 +22,7 @@ describe("resolveMermaidAscii resize selection", () => {
 				if (direction === "TD") return "too-wide-for-four";
 				return "z";
 			}
+			if (source === "padded") return "\u001b[31m┌──┐\u001b[0m    \n\u001b[31m└──┘\u001b[0m    \n        \n   ";
 			return "direction-ignored-and-wide";
 		});
 	});
@@ -49,6 +50,10 @@ describe("resolveMermaidAscii resize selection", () => {
 
 	it("measures themed ASCII without counting ANSI", () => {
 		expect(resolveMermaidAscii("colored", { maxWidth: 4 })).toBe("\u001b[31mabcd\u001b[0m");
+	});
+
+	it("removes renderer canvas padding without disturbing ANSI styling", () => {
+		expect(resolveMermaidAscii("padded")).toBe("\u001b[31m┌──┐\u001b[0m\n\u001b[31m└──┘\u001b[0m");
 	});
 
 	it("returns null without trying orientations when the source fails", () => {

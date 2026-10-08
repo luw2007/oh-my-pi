@@ -53,6 +53,13 @@ function measureLayout(ascii: string, authored: boolean): LayoutCandidate {
 	return { ascii, width: asciiDisplayWidth(ascii), height: ascii.split("\n").length, authored };
 }
 
+/** Remove canvas padding the native renderer uses for placement. */
+function trimCanvas(ascii: string): string {
+	const lines = ascii.split("\n").map(line => line.replace(/ +$/u, ""));
+	while (lines.length > 0 && Bun.stripANSI(lines.at(-1)!).trim().length === 0) lines.pop();
+	return lines.join("\n");
+}
+
 function renderVariant(
 	source: string,
 	baseOptions: MermaidRenderOptions,
@@ -63,7 +70,11 @@ function renderVariant(
 	const cached = cache.get(key);
 	if (cached !== undefined) return cached;
 
-	const ascii = mermaidAscii.renderMermaidAsciiSafe(source, direction ? { ...baseOptions, direction } : baseOptions);
+	const rendered = mermaidAscii.renderMermaidAsciiSafe(
+		source,
+		direction ? { ...baseOptions, direction } : baseOptions,
+	);
+	const ascii = rendered === null ? null : trimCanvas(rendered);
 	cache.set(key, ascii);
 	return ascii;
 }
