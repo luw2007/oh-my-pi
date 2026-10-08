@@ -1377,6 +1377,8 @@ export interface MarkdownTheme {
 	 * Return null to fall back to fenced code rendering.
 	 */
 	resolveMermaidAscii?: (source: string, maxWidth?: number) => string | null;
+	/** Build the collapsed Mermaid hint for the hidden row count. */
+	mermaidExpandHint?: (hiddenRows: number) => string;
 	/**
 	 * Glyphs for quote borders, rules, tables and color swatches. Optional so themes
 	 * built to the upstream pi-tui `MarkdownTheme` shape (which has no `symbols`)
@@ -1656,6 +1658,7 @@ interface RenderSignature {
 	imageProtocol: string;
 	hyperlinks: boolean;
 	textSizing: boolean;
+	expanded: boolean;
 	bgColorProbe: string;
 	headingProbe: string;
 	/** Fallback glyphs for themes without `symbols`; their identity alone cannot tell presets apart. */
@@ -1871,7 +1874,16 @@ export class Markdown implements Component {
 	// B+ capture plumbing: #renderContentLines records the last rendered paragraph row.
 	#lastTailCapture?: { kind: "paragraph"; open: boolean; rowInput: string; rowRaw: string };
 	#ignoreTight = false;
+	#expanded = false;
 	#native?: { text: string; stream: boolean; node: NativeNode };
+
+	/** Show full Mermaid diagrams instead of their 12-row preview. */
+	setExpanded(expanded: boolean): void {
+		if (this.#expanded === expanded) return;
+		this.#expanded = expanded;
+		this.invalidate();
+	}
+
 	setIgnoreTight(ignore: boolean): this {
 		this.#ignoreTight = ignore;
 		this.invalidate();
@@ -2571,6 +2583,7 @@ export class Markdown implements Component {
 			imageProtocol: TERMINAL.imageProtocol ?? "",
 			hyperlinks: TERMINAL.hyperlinks,
 			textSizing: TERMINAL.textSizing,
+			expanded: this.#expanded,
 			bgColorProbe,
 			headingProbe,
 			symbolsProbe: this.#symbolsProbe,
@@ -2582,7 +2595,7 @@ export class Markdown implements Component {
 	}
 
 	#renderCacheKey(normalizedText: string, signature: RenderSignature): string {
-		return `${normalizedText}\x00${signature.width}\x00${signature.paddingX}\x00${signature.paddingY}\x00${signature.codeBlockIndent}\x00${signature.themeId}\x00${signature.defaultTextStyleId}\x00${signature.imageProtocol}\x00${signature.hyperlinks ? 1 : 0}\x00${signature.textSizing ? 1 : 0}\x00${signature.bgColorProbe}\x00${signature.headingProbe}\x00${signature.symbolsProbe}`;
+		return `${normalizedText}\x00${signature.width}\x00${signature.paddingX}\x00${signature.paddingY}\x00${signature.codeBlockIndent}\x00${signature.themeId}\x00${signature.defaultTextStyleId}\x00${signature.imageProtocol}\x00${signature.hyperlinks ? 1 : 0}\x00${signature.textSizing ? 1 : 0}\x00${signature.expanded ? 1 : 0}\x00${signature.bgColorProbe}\x00${signature.headingProbe}\x00${signature.symbolsProbe}`;
 	}
 
 	#renderStreamingContentLines(
@@ -3255,7 +3268,9 @@ export class Markdown implements Component {
 				if (token.lang === "mermaid" && this.#theme.resolveMermaidAscii) {
 					const ascii = this.#theme.resolveMermaidAscii(token.text, width);
 					if (ascii) {
-						for (const asciiLine of ascii.split("\n")) {
+						const asciiLines = ascii.split("\n");
+						const visibleLines = !this.#expanded && asciiLines.length > 12 ? asciiLines.slice(0, 12) : asciiLines;
+						for (const asciiLine of visibleLines) {
 							lines.push(
 								renderedLine(
 									visibleWidth(asciiLine) > width
@@ -3263,6 +3278,11 @@ export class Markdown implements Component {
 										: asciiLine,
 								),
 							);
+						}
+						if (visibleLines.length < asciiLines.length) {
+							const hidden = asciiLines.length - visibleLines.length;
+							const hint = this.#theme.mermaidExpandHint?.(hidden) ?? `… ${hidden} more lines`;
+							lines.push(renderedLine(truncateToWidth(hint, width)));
 						}
 						if (nextTokenType && nextTokenType !== "space") {
 							lines.push(renderedLine(""));

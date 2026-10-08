@@ -38,6 +38,7 @@ export class FigureMarkdown extends Container {
 	readonly #options: FigureMarkdownOptions;
 	#text = "";
 	#transient = false;
+	#expanded = false;
 	#parts: Part[] = [];
 
 	constructor(text: string, options: FigureMarkdownOptions) {
@@ -52,6 +53,13 @@ export class FigureMarkdown extends Container {
 		this.#text = text;
 		this.#reconcile();
 		return true;
+	}
+
+	/** Apply transcript-wide expansion to Mermaid fences inside prose runs. */
+	setExpanded(expanded: boolean): void {
+		if (this.#expanded === expanded) return;
+		this.#expanded = expanded;
+		for (const part of this.#parts) if (part.kind === "markdown") part.md.setExpanded(expanded);
 	}
 
 	get transientRenderCache(): boolean {
@@ -82,9 +90,12 @@ export class FigureMarkdown extends Container {
 
 	/** Rebuild the prose runs through the Markdown factory after its theme changed; figures keep their rasters. */
 	restyle(): void {
-		this.#parts = this.#parts.map(part =>
-			part.kind === "markdown" ? { kind: "markdown", md: this.#options.markdown(part.text), text: part.text } : part,
-		);
+		this.#parts = this.#parts.map(part => {
+			if (part.kind !== "markdown") return part;
+			const md = this.#options.markdown(part.text);
+			md.setExpanded(this.#expanded);
+			return { kind: "markdown", md, text: part.text };
+		});
 		this.#mount();
 		this.#syncTails();
 	}
@@ -112,7 +123,9 @@ export class FigureMarkdown extends Container {
 					return old;
 				}
 				reshaped = true;
-				return { kind: "markdown", md: this.#options.markdown(text), text };
+				const md = this.#options.markdown(text);
+				md.setExpanded(this.#expanded);
+				return { kind: "markdown", md, text };
 			}
 			if (old?.kind === "svg") {
 				old.source = segment.source;

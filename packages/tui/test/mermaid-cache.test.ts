@@ -4,13 +4,16 @@ import { clearMermaidCache, resolveMermaidAscii } from "../src/theme/mermaid-cac
 
 describe("resolveMermaidAscii resize selection", () => {
 	const renders: string[] = [];
+	const spacings: string[] = [];
 
 	beforeEach(() => {
 		renders.length = 0;
+		spacings.length = 0;
 		clearMermaidCache();
 		vi.spyOn(mermaidAscii, "renderMermaidAsciiSafe").mockImplementation((source, options) => {
 			const direction = options?.direction ?? "authored";
 			renders.push(`${source}:${direction}`);
+			spacings.push(`${options?.paddingX}/${options?.paddingY}/${options?.boxBorderPadding}`);
 			if (source === "bad") return null;
 			if (source === "wide-authored") {
 				if (direction === "authored") return "AUTHORED-ALSO-WIDE\nsecond\nthird";
@@ -23,6 +26,9 @@ describe("resolveMermaidAscii resize selection", () => {
 				return "z";
 			}
 			if (source === "padded") return "\u001b[31m┌──┐\u001b[0m    \n\u001b[31m└──┘\u001b[0m    \n        \n   ";
+			if (source.startsWith("classDiagram\nadaptive")) {
+				return options?.paddingX === 1 ? "tight-fit" : "compact-too-wide";
+			}
 			return "direction-ignored-and-wide";
 		});
 	});
@@ -56,6 +62,11 @@ describe("resolveMermaidAscii resize selection", () => {
 		expect(resolveMermaidAscii("padded")).toBe("\u001b[31m┌──┐\u001b[0m\n\u001b[31m└──┘\u001b[0m");
 	});
 
+	it("retries with tight spacing only when compact spacing cannot fit", () => {
+		expect(resolveMermaidAscii("classDiagram\nadaptive", { maxWidth: 10 })).toBe("tight-fit");
+		expect(spacings).toEqual(["3/2/0", "1/1/0"]);
+	});
+
 	it("returns null without trying orientations when the source fails", () => {
 		expect(resolveMermaidAscii("bad", { maxWidth: 80 })).toBeNull();
 		expect(renders).toEqual(["bad:authored"]);
@@ -73,7 +84,7 @@ describe("resolveMermaidAscii resize selection", () => {
 			renders.length = 0;
 			clearMermaidCache();
 			expect(resolveMermaidAscii(source, { maxWidth: 4 })).toBe("direction-ignored-and-wide");
-			expect(renders).toEqual([`${source}:authored`]);
+			expect(renders).toEqual([`${source}:authored`, `${source}:authored`]);
 		}
 	});
 
@@ -90,7 +101,12 @@ describe("resolveMermaidAscii resize selection", () => {
 			renders.length = 0;
 			clearMermaidCache();
 			resolveMermaidAscii(source, { maxWidth: 4 });
-			expect(renders).toEqual([`${source}:authored`, ...forced.map(direction => `${source}:${direction}`)]);
+			expect(renders).toEqual([
+				`${source}:authored`,
+				...forced.map(direction => `${source}:${direction}`),
+				`${source}:authored`,
+				...forced.map(direction => `${source}:${direction}`),
+			]);
 		}
 	});
 });

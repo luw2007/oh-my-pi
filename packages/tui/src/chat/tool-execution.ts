@@ -860,6 +860,7 @@ export class ToolExecutionComponent extends Container {
 	setExpanded(expanded: boolean): void {
 		if (this.#expanded !== expanded) this.#blockVersion++;
 		this.#expanded = expanded;
+		this.#figure?.setExpanded(expanded);
 		this.#updateDisplay();
 	}
 
@@ -1701,6 +1702,7 @@ export class ToolExecutionComponent extends Container {
 			this.addChild(figure);
 		}
 		figure.update(fence);
+		figure.setExpanded(this.#expanded);
 	}
 
 	#getCallArgsForRender(): unknown {

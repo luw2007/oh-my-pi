@@ -8,6 +8,17 @@ import { writeToolRenderer } from "@oh-my-pi/pi-tui/tools/write";
 const originalImageProtocol = TERMINAL.imageProtocol;
 const SVG = "<svg viewBox='0 0 160 40'><rect width='160' height='40' fill='#3b82f6'/></svg>";
 const MERMAID = "flowchart LR\n  A[Start] --> B[Ship]\n";
+const LONG_MERMAID = [
+	"sequenceDiagram",
+	"participant A",
+	"participant B",
+	"A->>B: one",
+	"B-->>A: two",
+	"A->>B: three",
+	"B-->>A: four",
+	"A->>B: five",
+	"B-->>A: six",
+].join("\n");
 const OBJ = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
 const WROTE = { content: [{ type: "text", text: "Wrote" }], details: {} };
 
@@ -88,6 +99,20 @@ describe("write figures", () => {
 		const broken = streamingWrite("broken.mmd", "not a diagram {{{");
 		broken.finish("not a diagram {{{");
 		expect(plain(broken.component.render(80)).match(/not a diagram/g)).toHaveLength(1);
+	});
+
+	it("expands a long Mermaid file preview with the tool card toggle", () => {
+		const write = streamingWrite("flow.mmd", LONG_MERMAID);
+		write.finish(LONG_MERMAID);
+
+		const collapsed = plain(write.component.render(80));
+		expect(collapsed).toContain("more lines");
+		expect(collapsed).not.toContain(" six ");
+
+		write.component.setExpanded(true);
+		const expanded = plain(write.component.render(80));
+		expect(expanded).toContain(" six ");
+		expect(expanded).not.toContain("more lines");
 	});
 
 	it("leads a native figure write with its fence: open and streaming until the content is final", () => {

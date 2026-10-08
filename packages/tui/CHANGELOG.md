@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Mermaid diagrams no longer keep renderer padding at the right edge or blank canvas rows below the drawing.
+- Mermaid diagrams now use compact spacing, tighten further on narrow terminals, collapse after 12 rows with the shared expand shortcut, and remove empty renderer canvas edges ([#11124](https://github.com/can1357/oh-my-pi/issues/11124)).
 - Magpie response usage rows now show the canonical model returned by the gateway, including its reported effort, in live and replayed transcripts instead of the requested routing group.
 
 ## [18.8.4] - 2026-10-08

@@ -80,6 +80,8 @@ function renderVariant(
 }
 
 const FORCED_DIRECTIONS = ["TD", "LR"] as const;
+const COMPACT_SPACING = { paddingX: 3, paddingY: 2, boxBorderPadding: 0 } as const;
+const TIGHT_SPACING = { paddingX: 1, paddingY: 1, boxBorderPadding: 0 } as const;
 type ForcedDirection = (typeof FORCED_DIRECTIONS)[number];
 
 /**
@@ -117,20 +119,27 @@ export function resolveMermaidAscii(source: string, options?: MermaidResolveOpti
 
 	const { maxWidth, ...rest } = options ?? {};
 	// Default to uncolored output; callers opt into a themed palette explicitly.
-	const baseOptions: MermaidRenderOptions = { colorMode: "none", ...rest };
-	const baseKey = JSON.stringify(baseOptions);
-
-	const base = renderVariant(normalizedSource, baseOptions, baseKey, null);
+	const compactOptions: MermaidRenderOptions = { colorMode: "none", ...rest, ...COMPACT_SPACING };
+	const compactKey = JSON.stringify(compactOptions);
+	const base = renderVariant(normalizedSource, compactOptions, compactKey, null);
 	if (base === null) return null;
 	if (maxWidth === undefined) return base;
 
 	// Width selection is against cached renders, so a later resize re-decides
-	// without drawing again. Only forced layouts that can differ from the
-	// authored one are rendered (see `forcedDirections`).
-	const candidates = [measureLayout(base, true)];
-	for (const direction of forcedDirections(normalizedSource)) {
-		const variant = renderVariant(normalizedSource, baseOptions, baseKey, direction);
-		if (variant !== null) candidates.push(measureLayout(variant, false));
+	// without drawing again. Prefer compact spacing; retry the full candidate set
+	// with tight spacing only when no compact layout fits.
+	const directions: Array<"TD" | "LR" | null> = [null, ...forcedDirections(normalizedSource)];
+	const candidates = directions.flatMap(direction => {
+		const variant = renderVariant(normalizedSource, compactOptions, compactKey, direction);
+		return variant === null ? [] : [measureLayout(variant, direction === null)];
+	});
+	if (!candidates.some(candidate => candidate.width <= maxWidth)) {
+		const tightOptions: MermaidRenderOptions = { colorMode: "none", ...rest, ...TIGHT_SPACING };
+		const tightKey = JSON.stringify(tightOptions);
+		for (const direction of directions) {
+			const variant = renderVariant(normalizedSource, tightOptions, tightKey, direction);
+			if (variant !== null) candidates.push(measureLayout(variant, direction === null));
+		}
 	}
 
 	const fitting = candidates.filter(candidate => candidate.width <= maxWidth);

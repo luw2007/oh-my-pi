@@ -976,6 +976,26 @@ more text`,
 			expect(plainLines).toEqual([" Start", "   |", " Stop"]);
 		});
 
+		it("collapses Mermaid diagrams after 12 rows and expands them through the shared toggle", () => {
+			const diagram = Array.from({ length: 15 }, (_, index) => `row ${index + 1}`).join("\n");
+			const markdown = new Markdown("```mermaid\nflowchart TD\n```", 0, 0, {
+				...defaultMarkdownTheme,
+				resolveMermaidAscii: () => diagram,
+				mermaidExpandHint: hidden => `… ${hidden} more lines (Ctrl+O to expand)`,
+			});
+
+			const collapsed = markdown.render(80).map(line => stripVTControlCharacters(line).trimEnd());
+			expect(collapsed).toHaveLength(13);
+			expect(collapsed[11]).toBe("row 12");
+			expect(collapsed[12]).toContain("3 more lines");
+			expect(collapsed[12]).toContain("Ctrl+O");
+
+			markdown.setExpanded(true);
+			const expanded = markdown.render(80).map(line => stripVTControlCharacters(line).trimEnd());
+			expect(expanded).toHaveLength(15);
+			expect(expanded.at(-1)).toBe("row 15");
+		});
+
 		it("falls back to the original fenced code block when mermaid resolution returns null", () => {
 			const invalidMermaid = "```mermaid\nflowchart TD\n  A --\n```";
 			const invalidSource = "flowchart TD\n  A --";

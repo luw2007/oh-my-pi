@@ -7,6 +7,7 @@ import {
 } from "@oh-my-pi/pi-natives";
 import type { EditorTheme } from "../components/editor";
 import type { MarkdownTheme } from "../components/markdown";
+import { expandKeyHint } from "../render/render-utils";
 import type { SelectListTheme } from "../components/select-list";
 import type { SettingsListTheme } from "../components/settings-list";
 import type { SymbolTheme } from "../symbols";
@@ -237,6 +238,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 						colorMode: mermaid.mermaidColorMode,
 					})
 			: undefined,
+		mermaidExpandHint: hiddenRows => theme.fg("dim", `… ${hiddenRows} more lines (${expandKeyHint()} to expand)`),
 		highlightCode: (code: string, lang?: string): string[] => {
 			const validLang = lang && nativeSupportsLanguage(lang) ? lang : undefined;
 			const highlighted = highlightCached(code, validLang, theme);

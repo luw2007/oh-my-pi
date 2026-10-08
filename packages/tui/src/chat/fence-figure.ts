@@ -42,6 +42,7 @@ export class FenceFigure implements Component {
 	readonly lang: FenceFigureLang;
 	readonly #svg: SvgFigure | undefined;
 	#source = "";
+	#expanded = false;
 	/** The mermaid fence as assistant Markdown renders it; rebuilt after a theme change. */
 	#diagram: Markdown | undefined;
 
@@ -57,6 +58,13 @@ export class FenceFigure implements Component {
 		this.#svg?.update(figure.source, figure.closed);
 	}
 
+	/** Apply the parent tool card's expansion state to Mermaid previews. */
+	setExpanded(expanded: boolean): void {
+		if (this.#expanded === expanded) return;
+		this.#expanded = expanded;
+		this.#diagram?.setExpanded(expanded);
+	}
+
 	/** Whether a closed svg's raster is still on its way. */
 	get pending(): boolean {
 		return this.#svg?.pending === true;
@@ -65,7 +73,10 @@ export class FenceFigure implements Component {
 	/** The drawing; no rows while an svg draws, or when it does not. */
 	render(width: number): readonly string[] {
 		if (this.#svg) return this.#svg.render(width);
-		this.#diagram ??= new Markdown(fencedCode("mermaid", this.#source), 1, 0, getMarkdownTheme());
+		if (!this.#diagram) {
+			this.#diagram = new Markdown(fencedCode("mermaid", this.#source), 1, 0, getMarkdownTheme());
+			this.#diagram.setExpanded(this.#expanded);
+		}
 		return this.#diagram.render(width);
 	}
 

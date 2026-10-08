@@ -40,6 +40,7 @@ import { describeTableChart, hasChartTable, lookupTableChart, splitTableCharts }
  * Full text is still kept in the persisted session.
  */
 const MAX_TRANSCRIPT_ERROR_ROWS = 8;
+const MERMAID_FENCE = /^ {0,3}(?:`{3,}|~{3,})[ \t]*mermaid\b/im;
 const EMPTY_STABLE_RENDER: readonly string[] = [];
 
 /** The native head of a finished thinking block: "Thought for 12s", or "Thought" when it was never seen streaming. */
@@ -301,6 +302,8 @@ export class AssistantMessageComponent extends Container {
 	 * every message in the transcript.
 	 */
 	#hasTruncatableError = false;
+	/** Whether the transcript-wide Ctrl+O state expands long Mermaid diagrams. */
+	#mermaidExpanded = false;
 	/**
 	 * Monotonic content version reported to the transcript container via
 	 * {@link getTranscriptBlockVersion}. Bumped by {@link updateContent} — the
@@ -735,10 +738,18 @@ export class AssistantMessageComponent extends Container {
 	 * when expanded so the complete body is reachable without sending a message.
 	 */
 	setExpanded(expanded: boolean): void {
-		if (this.#errorExpanded === expanded) return;
+		const errorChanged = this.#errorExpanded !== expanded;
+		const mermaidChanged = this.#mermaidExpanded !== expanded;
+		if (!errorChanged && !mermaidChanged) return;
 		this.#errorExpanded = expanded;
-		if (this.#hasTruncatableError && this.#lastMessage) {
-			this.updateContent(this.#lastMessage, { transient: this.#lastUpdateTransient });
+		this.#mermaidExpanded = expanded;
+		const hasMermaid = this.#lastMessage?.content.some(
+			content => content.type === "text" && MERMAID_FENCE.test(content.text),
+		);
+		if ((errorChanged && this.#hasTruncatableError) || (mermaidChanged && hasMermaid)) {
+			this.#fastPathKey = undefined;
+			this.#fastPathItems = undefined;
+			if (this.#lastMessage) this.updateContent(this.#lastMessage, { transient: this.#lastUpdateTransient });
 		}
 	}
 
@@ -1262,19 +1273,22 @@ export class AssistantMessageComponent extends Container {
 
 	/** Markdown for a text or thinking block; live children and stable-row renders share it so stable rows prefix the block render. */
 	#createMarkdown(kind: StablePartKind, text: string): Markdown {
-		return kind === "text"
-			? new Markdown(
-					text,
-					1,
-					0,
-					this.#getProseTheme(),
-					this.#textColorTransform ? { color: this.#textColorTransform } : undefined,
-					0,
-				)
-			: new Markdown(text, 1, 0, getMarkdownTheme(), {
-					color: (value: string) => theme.fg("thinkingText", value),
-					italic: true,
-				});
+		const markdown =
+			kind === "text"
+				? new Markdown(
+						text,
+						1,
+						0,
+						this.#getProseTheme(),
+						this.#textColorTransform ? { color: this.#textColorTransform } : undefined,
+						0,
+					)
+				: new Markdown(text, 1, 0, getMarkdownTheme(), {
+						color: (value: string) => theme.fg("thinkingText", value),
+						italic: true,
+					});
+		if (kind === "text") markdown.setExpanded(this.#mermaidExpanded);
+		return markdown;
 	}
 
 	/**
@@ -1325,6 +1339,7 @@ export class AssistantMessageComponent extends Container {
 				},
 			});
 		}
+		block.setExpanded(this.#mermaidExpanded);
 		this.#figureBlocks.set(index, block);
 		return block;
 	}

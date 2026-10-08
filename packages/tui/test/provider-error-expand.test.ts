@@ -11,6 +11,26 @@ function longError(n: number): string {
 	return Array.from({ length: n }, (_, i) => `provider error detail line ${i}`).join("\n");
 }
 
+function makeMessage(text: string): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-sonnet-4-5",
+		stopReason: "stop",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		timestamp: Date.now(),
+	};
+}
+
 function makeErr(errorMessage: string): AssistantMessage {
 	return {
 		role: "assistant",
@@ -31,6 +51,37 @@ function makeErr(errorMessage: string): AssistantMessage {
 		timestamp: Date.now(),
 	};
 }
+
+describe("assistant message expand", () => {
+	it("expands a long Mermaid diagram through the transcript-wide toggle", () => {
+		const source = [
+			"sequenceDiagram",
+			"participant A",
+			"participant B",
+			"A->>B: one",
+			"B-->>A: two",
+			"A->>B: three",
+			"B-->>A: four",
+			"A->>B: five",
+			"B-->>A: six",
+		].join("\n");
+		const component = new AssistantMessageComponent(makeMessage(`\`\`\`mermaid\n${source}\n\`\`\``));
+
+		const collapsed = Bun.stripANSI(component.render(80).join("\n"));
+		expect(collapsed).toContain("more lines");
+		expect(collapsed).not.toContain(" six ");
+
+		component.setExpanded(true);
+		const expanded = Bun.stripANSI(component.render(80).join("\n"));
+		expect(expanded).toContain(" six ");
+		expect(expanded).not.toContain("more lines");
+
+		component.setExpanded(false);
+		const recollapsed = Bun.stripANSI(component.render(80).join("\n"));
+		expect(recollapsed).not.toContain(" six ");
+		expect(recollapsed).toContain("more lines");
+	});
+});
 
 describe("provider error expand", () => {
 	it("wraps a long single-line error across rows instead of cutting it at a fixed column", () => {
