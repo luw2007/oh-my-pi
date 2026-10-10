@@ -26,7 +26,7 @@ import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
-import type { SessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
+import { isTranscriptEntry, type SessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { Container, type TUI } from "@oh-my-pi/pi-tui";
 import { removeSyncWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
@@ -200,7 +200,7 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 			const saved = entries.find(entry => entry.type === "message" && entry.message.role === "assistant");
 			expect(saved?.type === "message" && saved.message.role === "assistant" && saved.message.upstreamProvider).toBe("traex");
 			const transcript = builder();
-			transcript.rebuild(entries);
+			transcript.rebuild(entries.filter(isTranscriptEntry));
 			const rendered = renderedText(transcript.container);
 			expect(rendered).toContain("traex/gpt-5.6-luna:medium");
 			expect(rendered).not.toContain("magpie/group/iq-task");
