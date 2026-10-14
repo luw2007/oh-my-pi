@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Managed skills created or updated by `learn` and `manage_skill` now disable automatic model invocation while remaining explicitly accessible; authored skills are unchanged.
 - Live and restored Magpie response stats display the gateway's actual served model instead of its requested group route, without appending a requested effort that the router may not have used.
 ### Added
 

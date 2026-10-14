@@ -69,12 +69,12 @@ export function sanitizeManagedDescription(raw: string): string {
 }
 
 /**
- * Serialize the minimal `name`/`description` frontmatter block via the repo's
- * YAML helper (round-trips through `parseFrontmatter`).
+ * Serialize managed frontmatter with automatic model invocation disabled via
+ * the repo's YAML helper (round-trips through `parseFrontmatter`).
  */
 export function toSkillFrontmatter(name: string, description: string): string {
 	const frontmatter = YAML.stringify(
-		{ name, description: sanitizeManagedDescription(description) },
+		{ name, description: sanitizeManagedDescription(description), "disable-model-invocation": true },
 		null,
 		2,
 	).trimEnd();

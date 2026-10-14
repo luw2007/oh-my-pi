@@ -51,6 +51,7 @@ describe("managed-skills primitives", () => {
 			const { frontmatter } = parseFrontmatter(content, { source: "test" });
 			expect(frontmatter.name).toBe("demo");
 			expect(frontmatter.description).toBe('has a "quote" and newline');
+			expect(frontmatter.disableModelInvocation).toBe(true);
 		});
 	});
 
@@ -61,6 +62,7 @@ describe("managed-skills primitives", () => {
 			const { frontmatter, body } = parseFrontmatter(content, { source: "test" });
 			expect(frontmatter.name).toBe("foo");
 			expect(frontmatter.description).toBe("When to foo.");
+			expect(frontmatter.disableModelInvocation).toBe(true);
 			expect(body).toContain("# Foo");
 
 			await expect(
@@ -71,7 +73,8 @@ describe("managed-skills primitives", () => {
 		it("update overwrites the body; update of a missing skill throws", async () => {
 			await writeManagedSkill({ action: "create", name: "bar", description: "d", body: "original" });
 			await writeManagedSkill({ action: "update", name: "bar", description: "d", body: "replaced" });
-			const { body } = parseFrontmatter(await Bun.file(skillFile("bar")).text(), { source: "test" });
+			const { frontmatter, body } = parseFrontmatter(await Bun.file(skillFile("bar")).text(), { source: "test" });
+			expect(frontmatter.disableModelInvocation).toBe(true);
 			expect(body).toContain("replaced");
 			expect(body).not.toContain("original");
 
@@ -79,6 +82,19 @@ describe("managed-skills primitives", () => {
 				writeManagedSkill({ action: "update", name: "missing", description: "d", body: "b" }),
 			).rejects.toThrow(/does not exist/);
 		});
+
+		for (const legacyFlag of [undefined, false]) {
+			it(`update disables automatic invocation for a legacy skill with flag ${legacyFlag}`, async () => {
+				await fs.mkdir(path.dirname(skillFile("legacy")), { recursive: true });
+				const metadata = ["---", "name: legacy", "description: Legacy."];
+				if (legacyFlag !== undefined) metadata.push(`disable-model-invocation: ${legacyFlag}`);
+				await Bun.write(skillFile("legacy"), [...metadata, "---", "", "original"].join("\n"));
+
+				await writeManagedSkill({ action: "update", name: "legacy", description: "Updated.", body: "replaced" });
+				const { frontmatter } = parseFrontmatter(await Bun.file(skillFile("legacy")).text(), { source: "test" });
+				expect(frontmatter.disableModelInvocation).toBe(true);
+			});
+		}
 
 		it("rejects an oversized body and writes nothing", async () => {
 			const huge = "a".repeat(MAX_MANAGED_SKILL_BYTES + 1);

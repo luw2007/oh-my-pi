@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getManagedSkillsDir } from "@oh-my-pi/pi-coding-agent/autolearn/managed-skills";
-import { disableUserSource, enableUserSource } from "@oh-my-pi/pi-coding-agent/capability";
+import { getManagedSkillsDir, writeManagedSkill } from "@oh-my-pi/pi-coding-agent/autolearn/managed-skills";
+import { disableUserSource, enableUserSource, reset as resetDiscoveryCache } from "@oh-my-pi/pi-coding-agent/capability";
 import "@oh-my-pi/pi-coding-agent/discovery";
 import { loadSkills } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
@@ -55,6 +55,30 @@ describe("managed-skills discovery", () => {
 		const foo = skills.find(s => s.name === "foo");
 		expect(foo).toBeDefined();
 		expect(foo?.source).toBe("omp-managed:user");
+	});
+
+	it("hides writer-created and updated managed skills but keeps authored skills unhidden", async () => {
+		await writeSkill(authoredDir, "ordinary", "An authored skill.");
+		for (const action of ["create", "update"] as const) {
+			const written = await writeManagedSkill({
+				action,
+				name: "generated",
+				description: `Managed ${action}.`,
+				body: `# ${action}`,
+			});
+			// writeManagedSkill rewrites the same file; drop the capability fs cache so
+			// the next discovery re-reads it instead of returning the prior description.
+			resetDiscoveryCache();
+			const { skills } = await loadSkills({ cwd: tempCwd });
+			const generated = skills.find(s => s.name === "generated");
+			expect(generated).toBeDefined();
+			expect(generated?.filePath).toBe(written.path);
+			expect(generated?.description).toBe(`Managed ${action}.`);
+			expect(generated?.hide).toBe(true);
+			const ordinary = skills.find(s => s.name === "ordinary");
+			expect(ordinary).toBeDefined();
+			expect(ordinary?.hide).toBe(false);
+		}
 	});
 
 	it("lets an authored skill win a name collision and drops the managed one", async () => {
