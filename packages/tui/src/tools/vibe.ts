@@ -501,6 +501,7 @@ export function createVibeToolRenderer(op: VibeOp) {
 	const callMemo = new OwnerMemo<NativeToolView | undefined>();
 	const resultMemo = new OwnerMemo<NativeToolView | undefined>();
 	return {
+		activityTally: () => (op === "spawn" ? { kind: "agent" as const } : undefined),
 		inline: true,
 		mergeCallAndResult: true,
 		animatedPendingPreview: composerOp,

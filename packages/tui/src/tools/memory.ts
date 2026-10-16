@@ -154,6 +154,7 @@ export const retainToolRenderer = {
 
 /** Render recalled memories with an expandable body. */
 export const recallToolRenderer = {
+	activityTally: () => ({ kind: "search" as const }),
 	inline: true,
 	mergeCallAndResult: true,
 	renderCall(args: QueryRenderArgs, _options: RenderResultOptions, theme: Theme): Component {

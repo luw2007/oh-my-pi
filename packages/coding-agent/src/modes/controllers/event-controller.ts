@@ -9,7 +9,7 @@ import { settings } from "../../config/settings";
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import { detectCacheInvalidation } from "@oh-my-pi/pi-tui/chat/cache-invalidation-marker";
 import {
-	groupedReadUsageCallIds,
+	groupedReadCallIds,
 	ReadToolGroupComponent,
 	readArgsCollapseIntoGroup,
 	readArgsHaveTarget,
@@ -29,7 +29,13 @@ import {
 	toolRenderName,
 } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TtsrNotificationComponent } from "@oh-my-pi/pi-tui/chat/ttsr-notification";
-import { createUsageRowBlock, formatUsageModel, TurnUsageTally, turnElapsedMs } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import { requestFooterInput } from "@oh-my-pi/pi-tui/chat/request-footer";
+import {
+	appendUsageRow,
+	demoteLatestUsageRow,
+	TurnUsageTally,
+	turnElapsedMs,
+} from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { appKey } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
 import { getSymbolTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "../../modes/types";
@@ -61,7 +67,6 @@ import {
 } from "@oh-my-pi/pi-tui/prompt/interactive-context-helpers";
 import {
 	assistantHasVisibleContent,
-	assistantUsageIsBilled,
 	splitAssistantMessageToolTimeline,
 } from "@oh-my-pi/pi-tui/chat/transcript-render-helpers";
 import { isWarpCliAgentProtocolActive } from "../warp-events";
@@ -1238,6 +1243,7 @@ export class EventController {
 			this.ctx.addMessageToChat(event.message);
 			this.ctx.ui.requestRender();
 		} else if (event.message.role === "assistant") {
+			demoteLatestUsageRow(this.ctx.chatContainer);
 			// A streaming component left over from an attempt that never saw its
 			// message_end (a mid-stream throw the loop could not pair) must not stay
 			// live: one unfinalized block at the transcript frontier blocks history
@@ -1802,37 +1808,25 @@ export class EventController {
 			this.#lastAssistantComponent = lastPostToolAssistantComponent ?? this.ctx.streamingComponent;
 			const turnUsage = this.#turnUsage.add(event.message, this.#turnStartedAt);
 			if (turnUsage) this.#lastAssistantComponent.setTurnUsage(turnUsage);
-			if (cfgDisplayShowTokenUsage.get(settings) && assistantUsageIsBilled(event.message.usage)) {
-				const readCallIds = groupedReadUsageCallIds(event.message);
-				const turnElapsed = cfgDisplayShowTurnTime.get(settings)
-					? turnElapsedMs(this.#turnStartedAt, event.message)
-					: undefined;
-				const usageAttached =
-					readCallIds !== undefined &&
-					(this.#lastReadGroup?.attachUsage(
-						readCallIds,
-						event.message.usage,
-						event.message.duration,
-						event.message.ttft,
-						event.message.timestamp,
-						turnElapsed,
-						formatUsageModel(event.message.provider, event.message.model, event.message.reasoningEffort, event.message.upstreamModel),
-					) ??
-						false);
-				if (!usageAttached) {
-					this.#resetReadGroup();
-					this.ctx.chatContainer.addChild(
-						createUsageRowBlock(
-							event.message.usage,
-							event.message.duration,
-							event.message.ttft,
-							event.message.timestamp,
-							turnElapsed,
-							formatUsageModel(event.message.provider, event.message.model, event.message.reasoningEffort, event.message.upstreamModel),
-						),
-					);
-				}
+			const readCallIds = groupedReadCallIds(event.message);
+			if (!readCallIds || !readCallIds.every(id => this.#lastReadGroup?.hasEntry(id))) {
+				this.#resetReadGroup();
 			}
+			const footer = requestFooterInput(
+				event.message,
+				{
+					getTool: name => this.ctx.viewSession.getToolByName(name),
+					isBuiltInTool: name => this.ctx.viewSession.hasBuiltInTool(name),
+				},
+				{
+					showUsage: cfgDisplayShowTokenUsage.get(settings),
+					turnElapsedMs: cfgDisplayShowTurnTime.get(settings)
+						? turnElapsedMs(this.#turnStartedAt, event.message)
+						: undefined,
+					omitActivity: event.message.stopReason === "aborted" && this.ctx.viewSession.isTtsrAbortPending,
+				},
+			);
+			if (footer) appendUsageRow(this.ctx.chatContainer, footer);
 			if (displayMessage === event.message) {
 				this.ctx.transcriptMessageComponents.set(event.message, this.ctx.streamingComponent);
 			}

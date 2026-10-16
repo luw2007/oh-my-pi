@@ -1024,6 +1024,9 @@ const lspResultMemo = new OwnerMemo<NativeToolView | undefined>();
 
 /** Render LSP requests and responses in the transcript. */
 export const lspToolRenderer = {
+	activityTally: (args: LspParams) => ({
+		kind: args?.action === "rename" || args?.action === "rename_file" ? ("edit" as const) : ("search" as const),
+	}),
 	renderCall,
 	renderResult,
 	describeCall(args: LspParams): NativeToolView {

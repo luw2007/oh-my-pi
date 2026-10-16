@@ -345,6 +345,7 @@ const searchResultMemo = new OwnerMemo<NativeToolView | undefined>();
 
 /** Render web search queries, answers, and cited sources. */
 export const webSearchToolRenderer = {
+	activityTally: () => ({ kind: "search" as const }),
 	renderCall: renderSearchCall,
 	renderResult: renderSearchResult,
 	describeCall(args: SearchRenderArgs): NativeToolView {

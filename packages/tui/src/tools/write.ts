@@ -46,6 +46,7 @@ import type {
 	RenderResultOptions,
 	ToolActivityContext,
 	ToolActivitySummary,
+	ToolActivityTally,
 	ToolFigure,
 	ToolRenderer,
 } from "./renderer";
@@ -57,6 +58,7 @@ import {
 	renderXdevCall,
 	renderXdevResult,
 	xdevActivitySummary,
+	xdevActivityTally,
 	type XdevRenderDispatch,
 	type XdevMountedRenderer,
 } from "./xdev";
@@ -563,6 +565,17 @@ function writeToolHead(
 
 /** Render file writes and delegated tool-device calls. */
 export const writeToolRenderer = {
+	activityTally(args: WriteRenderArgs): ToolActivityTally | undefined {
+		const path =
+			typeof args?.file_path === "string" ? args.file_path : typeof args?.path === "string" ? args.path : "";
+		const scheme = splitUrlScheme(path)?.scheme;
+		if (scheme === "agent" || scheme === "proc" || scheme === "cfg") return undefined;
+		if (scheme === "xd") {
+			const device = parseXdUrl(path);
+			return device?.name ? xdevActivityTally(device.name, args.content) : undefined;
+		}
+		return { kind: "edit" };
+	},
 	/** Compact one-line activity: device writes read as the mounted tool (`LSP · references foo`), file writes as `Write · <path>`. */
 	activitySummary(args: unknown, context: ToolActivityContext): ToolActivitySummary {
 		const writeArgs = (args ?? {}) as WriteRenderArgs;

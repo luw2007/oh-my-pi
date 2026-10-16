@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { AssistantMessage, Usage } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { type Component } from "../tui";
 import { Container } from "../tui";
 import { Text } from "../components/text";
@@ -19,7 +19,6 @@ import { fileHyperlink, renderCodeCell, renderMarkdownCell } from "../render";
 import { canonicalizeMessage } from "./thinking-display";
 import { internalUrlSchemeSpec, splitUrlScheme } from "../tools/url-scheme-host";
 import type { ToolExecutionHandle } from "./tool-execution";
-import { formatUsageRow } from "../overlays/usage-row";
 import { formatCount } from "@oh-my-pi/pi-utils";
 import type { TspCardStatus, TspSpan, TspText } from "@oh-my-pi/pi-wire";
 import type { NativeToolHead } from "../tools/renderer";
@@ -69,11 +68,10 @@ export function readArgsCollapseIntoGroup(args: unknown): boolean {
 }
 
 /**
- * Return the collapsed read calls that can own a turn's usage row. Mixed-tool
- * turns and visible content after a read keep the standalone row so request
- * metrics retain their transcript ordering.
+ * Return collapsed read call ids when a request can continue the read run.
+ * Mixed tools and visible content after a read break the run to preserve ordering.
  */
-export function groupedReadUsageCallIds(message: AssistantMessage): string[] | undefined {
+export function groupedReadCallIds(message: AssistantMessage): string[] | undefined {
 	const toolCallIds: string[] = [];
 	let sawToolCall = false;
 	for (const content of message.content) {
@@ -138,16 +136,6 @@ type ReadEntry = {
 function previewsMarkdown(entry: ReadEntry): boolean {
 	return readResultIsMarkdown({ contentType: entry.contentType }, { path: entry.path, raw: entry.raw });
 }
-
-type ReadUsageRow = {
-	toolCallIds: readonly string[];
-	usage: Usage;
-	durationMs?: number;
-	ttftMs?: number;
-	timestamp?: number;
-	turnElapsedMs?: number;
-	model?: string;
-};
 
 /** Number of preview rows to show per read while collapsed. */
 const COLLAPSED_PREVIEW_LINES = PREVIEW_LIMITS.OUTPUT_COLLAPSED;
@@ -358,8 +346,6 @@ function formatMergedSelectorParts(selectors: string[]): string {
 
 export class ReadToolGroupComponent extends Container implements ToolExecutionHandle {
 	#entries = new Map<string, ReadEntry>();
-	#usageRows = new Map<string, ReadUsageRow>();
-	#usageBatchByToolCallId = new Map<string, string>();
 	#text: Text;
 	#expanded = false;
 	#toolActivityVisible = true;
@@ -430,6 +416,10 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 
 	getTranscriptBlockVersion(): number {
 		return this.#blockVersion;
+	}
+
+	hasEntry(toolCallId: string): boolean {
+		return this.#entries.has(toolCallId);
 	}
 
 	updateArgs(args: ReadRenderArgs, toolCallId?: string): void {
@@ -512,43 +502,6 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		this.#updateDisplay();
 	}
 
-	/**
-	 * Nest one request's usage beneath the last visible read call from that
-	 * request. Parallel reads share one row rather than duplicating request totals.
-	 */
-	attachUsage(
-		toolCallIds: readonly string[],
-		usage: Usage,
-		durationMs?: number,
-		ttftMs?: number,
-		timestamp?: number,
-		turnElapsedMs?: number,
-		model?: string,
-	): boolean {
-		const attachedToolCallIds: string[] = [];
-		let anchorId: string | undefined;
-		for (const toolCallId of toolCallIds) {
-			if (!this.#entries.has(toolCallId)) continue;
-			attachedToolCallIds.push(toolCallId);
-			anchorId = toolCallId;
-		}
-		if (!anchorId) return false;
-		for (const toolCallId of attachedToolCallIds) {
-			this.#usageBatchByToolCallId.set(toolCallId, anchorId);
-		}
-		this.#usageRows.set(anchorId, {
-			toolCallIds: attachedToolCallIds,
-			usage,
-			durationMs,
-			ttftMs,
-			timestamp,
-			turnElapsedMs,
-			model,
-		});
-		this.#updateDisplay();
-		return true;
-	}
-
 	setArgsComplete(_toolCallId?: string): void {
 		this.#updateDisplay();
 	}
@@ -595,7 +548,7 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 	 * The read run as one inline `tool` on terminals that list the kind, else
 	 * the fallback: a bare `card` (role `omp.tool.read`) with `Read <path>` or
 	 * `Read (N)` in the head, a `list` of path items (status tone, link,
-	 * correction and conflict detail, nested usage) and a clamped preview per
+	 * correction and conflict detail) and a clamped preview per
 	 * read when content previews are on.
 	 */
 	override describe(cx?: DescribeContext): NativeNode {
@@ -637,20 +590,13 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 				head = rowHead;
 			}
 			for (const entry of previews) body.push(...this.#nativePreview(entry));
-			for (const [i, usage] of (this.#usageRowsBySummaryRow(rows).get(0) ?? []).entries()) {
-				body.push(this.#nativeUsage(usage, `u${i}`));
-			}
 		} else {
 			head = { target: formatCount("file", rows.length), targetKind: "text" };
 			const summaryRows = this.#buildSummaryRows(
 				this.#displayTargetsForEntries(entries.filter(entry => !previews.includes(entry))),
 			);
-			const usageByRow = this.#usageRowsBySummaryRow(summaryRows);
-			for (const [index, row] of summaryRows.entries()) {
+			for (const row of summaryRows) {
 				body.push(this.#nativeFileRow(row));
-				for (const [i, usage] of (usageByRow.get(index) ?? []).entries()) {
-					body.push(this.#nativeUsage(usage, `u${index}.${i}`));
-				}
 			}
 			for (const entry of previews) {
 				const split = splitPathAndSel(entry.path);
@@ -658,8 +604,6 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 				const sectionHead: TspSpan[] = [span(name || "…", "path")];
 				if (split.sel) sectionHead.push(span(`:${split.sel}`, "muted"));
 				body.push(node("section", { head: sectionHead }, this.#nativePreview(entry), `p${entry.toolCallId}`));
-				const usage = this.#usageRows.get(entry.toolCallId);
-				if (usage) body.push(this.#nativeUsage(usage, `u${entry.toolCallId}`));
 			}
 		}
 		return node(
@@ -768,7 +712,6 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 	#describeGroup(): NativeNode {
 		const entries = [...this.#entries.values()];
 		const rows = this.#buildSummaryRows(this.#displayTargetsForEntries(entries));
-		const usageByRow = this.#usageRowsBySummaryRow(rows);
 		const previews = entries.filter(entry => this.#shouldRenderPreview(entry));
 		const status = this.#groupStatus(entries);
 		const title = span("Read", "toolTitle");
@@ -776,34 +719,18 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		let head: TspSpan[] = [title];
 		if (rows.length === 1) {
 			head = [title, span(" "), ...this.#nativePathSpans(rows[0]!)];
-			if (previews.length === 0) {
-				for (const usage of usageByRow.get(0) ?? []) children.push(this.#nativeUsage(usage, "u0"));
-			}
 		} else if (rows.length > 1) {
 			head = [title, span(` (${rows.length})`, "dim")];
 			const summaryTargets = this.#displayTargetsForEntries(
 				entries.filter(entry => !this.#shouldRenderPreview(entry)),
 			);
 			const summaryRows = this.#buildSummaryRows(summaryTargets);
-			const summaryUsage = this.#usageRowsBySummaryRow(summaryRows);
-			const items = summaryRows.map((row, index) => {
-				const usage = (summaryUsage.get(index) ?? []).map(usageRow =>
-					plainText(
-						formatUsageRow(
-							usageRow.usage,
-							usageRow.durationMs,
-							usageRow.ttftMs,
-							usageRow.timestamp,
-							usageRow.turnElapsedMs,
-						),
-					),
-				);
+			const items = summaryRows.map(row => {
 				return node(
 					"item",
 					{
 						label: this.#nativePathSpans(row),
 						tone: READ_STATUS_TONE[this.#statusForTargets(row.targets)],
-						detail: usage.length > 0 ? [span(usage.join(" · "), "dim")] : undefined,
 					},
 					[],
 					row.targetPath,
@@ -837,8 +764,6 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 					`p${entry.toolCallId}`,
 				),
 			);
-			const usage = this.#usageRows.get(entry.toolCallId);
-			if (usage) children.push(this.#nativeUsage(usage, `u${entry.toolCallId}`));
 		}
 		return card(
 			{
@@ -881,11 +806,6 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		return spans;
 	}
 
-	#nativeUsage(usage: ReadUsageRow, key: string): NativeNode {
-		const line = formatUsageRow(usage.usage, usage.durationMs, usage.ttftMs, usage.timestamp, usage.turnElapsedMs);
-		return text([span(plainText(line), "dim")], { wrap: "word", key, role: "omp.usage" });
-	}
-
 	#updateDisplay(): void {
 		this.#displayVersion++;
 		const entries = [...this.#entries.values()];
@@ -908,14 +828,11 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 				const statusSymbol = this.#formatStatus(this.#statusForTargets(row.targets));
 				const pathDisplay = this.#formatRowPath(row);
 				const lines = [` ${statusSymbol} ${theme.fg("toolTitle", theme.bold("Read"))} ${pathDisplay}`.trimEnd()];
-				const usageRows = this.#usageRowsBySummaryRow(displayRows).get(0) ?? [];
-				this.#appendUsageRows(lines, usageRows, "   ");
 				this.#text.setText(lines.join("\n"));
 				this.addChild(this.#text);
 			}
 			for (const entry of this.#previewEntriesForRow(row)) {
 				this.#addContentPreview(entry);
-				this.#addPreviewUsage(entry);
 			}
 			return;
 		}
@@ -925,9 +842,8 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		const entriesWithoutPreview = entries.filter(entry => !this.#shouldRenderPreview(entry));
 		const summaryTargets = this.#displayTargetsForEntries(entriesWithoutPreview);
 		const rows = this.#buildSummaryRows(summaryTargets);
-		const usageRowsBySummaryRow = this.#usageRowsBySummaryRow(rows);
 		for (const [index, row] of rows.entries()) {
-			this.#appendSummaryRow(lines, row, index, rows.length, usageRowsBySummaryRow.get(index) ?? []);
+			this.#appendSummaryRow(lines, row, index, rows.length);
 		}
 
 		this.#text.setText(lines.join("\n"));
@@ -936,7 +852,6 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		for (const entry of entries) {
 			if (this.#shouldRenderPreview(entry)) {
 				this.#addContentPreview(entry);
-				this.#addPreviewUsage(entry);
 			}
 		}
 	}
@@ -966,28 +881,19 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 	}
 
 	#buildSummaryRows(targets: ReadDisplayTarget[]): ReadSummaryRow[] {
-		const selectorTargetsByBasePathAndBatch = new Map<string, Map<string | undefined, ReadDisplayTarget[]>>();
+		const selectorTargetsByBasePath = new Map<string, ReadDisplayTarget[]>();
 		for (const target of targets) {
 			if (!target.selector) continue;
-			let targetsByBatch = selectorTargetsByBasePathAndBatch.get(target.basePath);
-			if (!targetsByBatch) {
-				targetsByBatch = new Map<string | undefined, ReadDisplayTarget[]>();
-				selectorTargetsByBasePathAndBatch.set(target.basePath, targetsByBatch);
-			}
-			const batchId = this.#usageBatchByToolCallId.get(target.entry.toolCallId);
-			const existing = targetsByBatch.get(batchId);
+			const existing = selectorTargetsByBasePath.get(target.basePath);
 			if (existing) existing.push(target);
-			else targetsByBatch.set(batchId, [target]);
+			else selectorTargetsByBasePath.set(target.basePath, [target]);
 		}
 
 		const mergedTargetsByTarget = new Map<ReadDisplayTarget, ReadDisplayTarget[]>();
-		for (const [basePath, targetsByBatch] of selectorTargetsByBasePathAndBatch) {
-			if (!basePath) continue;
-			for (const groupedTargets of targetsByBatch.values()) {
-				if (groupedTargets.length <= 1) continue;
-				for (const target of groupedTargets) {
-					mergedTargetsByTarget.set(target, groupedTargets);
-				}
+		for (const [basePath, groupedTargets] of selectorTargetsByBasePath) {
+			if (!basePath || groupedTargets.length <= 1) continue;
+			for (const target of groupedTargets) {
+				mergedTargetsByTarget.set(target, groupedTargets);
 			}
 		}
 
@@ -1015,58 +921,9 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		return rows;
 	}
 
-	#appendSummaryRow(
-		lines: string[],
-		row: ReadSummaryRow,
-		index: number,
-		total: number,
-		usageRows: ReadUsageRow[],
-	): void {
+	#appendSummaryRow(lines: string[], row: ReadSummaryRow, index: number, total: number): void {
 		const connector = index === total - 1 ? theme.tree.last : theme.tree.branch;
 		lines.push(`   ${theme.fg("dim", connector)} ${this.#formatRow(row)}`.trimEnd());
-
-		const connectorWidth = Bun.stringWidth(connector);
-		const continuation =
-			index === total - 1
-				? " ".repeat(connectorWidth)
-				: `${theme.tree.vertical}${" ".repeat(Math.max(0, connectorWidth - Bun.stringWidth(theme.tree.vertical)))}`;
-		this.#appendUsageRows(lines, usageRows, `   ${continuation} `);
-	}
-
-	#usageRowsBySummaryRow(rows: ReadSummaryRow[]): Map<number, ReadUsageRow[]> {
-		const lastRowIndexByToolCallId = new Map<string, number>();
-		for (const [index, row] of rows.entries()) {
-			for (const target of row.targets) {
-				lastRowIndexByToolCallId.set(target.entry.toolCallId, index);
-			}
-		}
-
-		const usageRowsByIndex = new Map<number, ReadUsageRow[]>();
-		for (const usageRow of this.#usageRows.values()) {
-			let lastRowIndex: number | undefined;
-			for (const toolCallId of usageRow.toolCallIds) {
-				const index = lastRowIndexByToolCallId.get(toolCallId);
-				if (index !== undefined && (lastRowIndex === undefined || index > lastRowIndex)) {
-					lastRowIndex = index;
-				}
-			}
-			if (lastRowIndex === undefined) continue;
-			const usageRows = usageRowsByIndex.get(lastRowIndex);
-			if (usageRows) usageRows.push(usageRow);
-			else usageRowsByIndex.set(lastRowIndex, [usageRow]);
-		}
-		return usageRowsByIndex;
-	}
-
-	#appendUsageRows(lines: string[], usageRows: ReadUsageRow[], prefix: string): void {
-		for (const usageRow of usageRows) {
-			lines.push(
-				theme.fg(
-					"dim",
-					`${prefix}${formatUsageRow(usageRow.usage, usageRow.durationMs, usageRow.ttftMs, usageRow.timestamp, usageRow.turnElapsedMs, usageRow.model)}`,
-				),
-			);
-		}
 	}
 
 	#formatRow(row: ReadSummaryRow): string {
@@ -1217,28 +1074,6 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 			releaseRenderCaches: dropCache,
 		};
 		this.addChild(component);
-	}
-
-	#addPreviewUsage(entry: ReadEntry): void {
-		const usageRow = this.#usageRows.get(entry.toolCallId);
-		if (!usageRow) return;
-		this.addChild(
-			new Text(
-				theme.fg(
-					"dim",
-					formatUsageRow(
-						usageRow.usage,
-						usageRow.durationMs,
-						usageRow.ttftMs,
-						usageRow.timestamp,
-						usageRow.turnElapsedMs,
-						usageRow.model,
-					),
-				),
-				3,
-				0,
-			),
-		);
 	}
 
 	#shouldRenderPreview(entry: ReadEntry): boolean {

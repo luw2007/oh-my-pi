@@ -443,7 +443,8 @@ describe("createUsageRowBlock describe", () => {
 			const described = block.describe?.({ ...cx, hour12 });
 			if (!described) throw new Error("usage row did not describe");
 			const [line] = findAll(described, n => n.k === "text");
-			return { line: JSON.stringify(line), title: String(described.p?.title) };
+			const [usageRow] = findAll(described, n => n.p?.role === "omp.usage.turn");
+			return { line: JSON.stringify(line), title: String(usageRow?.p?.title) };
 		};
 		// No clock from the terminal keeps the log-style stamp.
 		expect(shown(undefined).line).toContain('"18:05 · ');

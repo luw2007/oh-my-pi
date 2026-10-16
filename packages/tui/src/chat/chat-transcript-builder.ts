@@ -36,7 +36,6 @@ import {
 import { theme } from "../theme";
 import {
 	assistantHasVisibleContent,
-	assistantUsageIsBilled,
 	buildAsyncResultBlock,
 	buildFileMentionBlock,
 	buildIrcMessageCard,
@@ -64,11 +63,18 @@ import {
 	LateDiagnosticsMessageComponent,
 	routeLateDiagnostics,
 } from "./late-diagnostics-message";
-import { groupedReadUsageCallIds, ReadToolGroupComponent, readArgsCollapseIntoGroup } from "./read-tool-group";
+import { groupedReadCallIds, ReadToolGroupComponent, readArgsCollapseIntoGroup } from "./read-tool-group";
+import { requestFooterInput } from "./request-footer";
 import { SkillMessageComponent } from "./skill-message";
 import { ToolExecutionComponent } from "./tool-execution";
 import { TranscriptContainer } from "../chrome/transcript-container";
-import { createUsageRowBlock, formatUsageModel, TurnUsageTally, turnElapsedMs } from "../overlays/usage-row";
+import {
+	appendUsageRow,
+	demoteLatestUsageRow,
+	type RequestFooterInput,
+	TurnUsageTally,
+	turnElapsedMs,
+} from "../overlays/usage-row";
 import { CollapsedSyntheticMessageComponent, UserMessageComponent } from "./user-message";
 
 export interface ChatTranscriptBuilderDeps {
@@ -93,13 +99,9 @@ export class ChatTranscriptBuilder {
 	#pendingTools = new Map<string, ToolExecutionComponent | ReadToolGroupComponent>();
 	#readArgs = new Map<string, Record<string, unknown>>();
 	#readGroup: ReadToolGroupComponent | null = null;
-	#pendingUsage: Usage | undefined;
-	#pendingUsageDuration: number | undefined;
-	#pendingUsageTtft: number | undefined;
-	#pendingUsageTimestamp: number | undefined;
-	#pendingReadUsageCallIds: string[] | undefined;
-	#pendingUsageElapsedMs: number | undefined;
-	#pendingUsageModel: string | undefined;
+	#pendingFooter: RequestFooterInput | undefined;
+	#pendingReadCallIds: string[] | undefined;
+	#pendingRequest = false;
 	#turnStartedAt: number | undefined;
 	readonly #turnUsage = new TurnUsageTally();
 	#lastAssistantUsage: Usage | undefined;
@@ -168,13 +170,9 @@ export class ChatTranscriptBuilder {
 		this.#pendingTools.clear();
 		this.#readArgs.clear();
 		this.#readGroup = null;
-		this.#pendingUsage = undefined;
-		this.#pendingUsageDuration = undefined;
-		this.#pendingUsageTtft = undefined;
-		this.#pendingUsageTimestamp = undefined;
-		this.#pendingReadUsageCallIds = undefined;
-		this.#pendingUsageElapsedMs = undefined;
-		this.#pendingUsageModel = undefined;
+		this.#pendingFooter = undefined;
+		this.#pendingReadCallIds = undefined;
+		this.#pendingRequest = false;
 		this.#turnStartedAt = undefined;
 		this.#turnUsage.reset();
 		this.#lastAssistantUsage = undefined;
@@ -245,48 +243,24 @@ export class ChatTranscriptBuilder {
 		return this.#readGroup;
 	}
 
-	// Defer per-turn metrics until the turn's tool results have materialized.
-	// Read-only invisible turns attach the metrics to their shared compact
-	// group; every other turn keeps the standalone row below its tool blocks.
+	// Defer each request footer until its tool results have materialized.
 	#flushPendingUsage(): void {
-		if (!this.#pendingUsage) return;
-		const usageAttached =
-			this.#pendingReadUsageCallIds !== undefined &&
-			(this.#readGroup?.attachUsage(
-				this.#pendingReadUsageCallIds,
-				this.#pendingUsage,
-				this.#pendingUsageDuration,
-				this.#pendingUsageTtft,
-				this.#pendingUsageTimestamp,
-				this.#pendingUsageElapsedMs,
-				this.#pendingUsageModel,
-			) ??
-				false);
-		if (!usageAttached) {
+		if (!this.#pendingRequest) return;
+		if (!this.#pendingReadCallIds || !this.#pendingReadCallIds.every(id => this.#readGroup?.hasEntry(id))) {
 			this.#readGroup?.seal();
 			this.#readGroup = null;
-			this.container.addChild(
-				createUsageRowBlock(
-					this.#pendingUsage,
-					this.#pendingUsageDuration,
-					this.#pendingUsageTtft,
-					this.#pendingUsageTimestamp,
-					this.#pendingUsageElapsedMs,
-					this.#pendingUsageModel,
-				),
-			);
 		}
-		this.#pendingUsage = undefined;
-		this.#pendingUsageDuration = undefined;
-		this.#pendingUsageTtft = undefined;
-		this.#pendingUsageTimestamp = undefined;
-		this.#pendingReadUsageCallIds = undefined;
-		this.#pendingUsageElapsedMs = undefined;
-		this.#pendingUsageModel = undefined;
+		if (this.#pendingFooter) appendUsageRow(this.container, this.#pendingFooter);
+		// Seal billed polls before the next assistant demotes their visible usage row.
+		if (this.#waitingPoll && !this.container.canDisplaceBlock(this.#waitingPoll)) this.#resolveWaitingPoll();
+		this.#pendingFooter = undefined;
+		this.#pendingReadCallIds = undefined;
+		this.#pendingRequest = false;
 	}
 
 	#appendChatMessage(message: AgentMessage): void {
 		if (message.role !== "toolResult") this.#flushPendingUsage();
+		if (message.role === "assistant") demoteLatestUsageRow(this.container);
 		if (message.role !== "assistant" && message.role !== "toolResult") {
 			this.#readGroup?.seal();
 			this.#readGroup = null;
@@ -528,15 +502,12 @@ export class ChatTranscriptBuilder {
 		const turnUsage = this.#turnUsage.add(message, this.#turnStartedAt);
 		if (turnUsage) lastAssistantComponent.setTurnUsage(turnUsage);
 
-		this.#pendingUsage =
-			displayPreferences.showTokenUsage && assistantUsageIsBilled(message.usage) ? message.usage : undefined;
-		this.#pendingUsageDuration = message.duration;
-		this.#pendingUsageTtft = message.ttft;
-		this.#pendingUsageTimestamp = message.timestamp;
-		this.#pendingUsageModel = formatUsageModel(message.provider, message.model, message.reasoningEffort, message.upstreamModel);
-		this.#pendingReadUsageCallIds = this.#pendingUsage ? groupedReadUsageCallIds(message) : undefined;
-		this.#pendingUsageElapsedMs =
-			this.#pendingUsage && displayPreferences.showTurnTime ? this.#turnElapsedMs(message) : undefined;
+		this.#pendingFooter = requestFooterInput(message, this.#deps, {
+			showUsage: displayPreferences.showTokenUsage,
+			turnElapsedMs: displayPreferences.showTurnTime ? this.#turnElapsedMs(message) : undefined,
+		});
+		this.#pendingReadCallIds = groupedReadCallIds(message);
+		this.#pendingRequest = true;
 	}
 
 	#appendToolResult(message: Extract<AgentMessage, { role: "toolResult" }>): void {

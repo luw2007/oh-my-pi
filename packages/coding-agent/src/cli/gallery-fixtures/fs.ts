@@ -1,6 +1,5 @@
 // oxlint-disable no-template-curly-in-string -- sample source-code strings intentionally contain literal placeholders.
 // Gallery fixtures for the filesystem tools (read, write, glob).
-import type { Usage } from "@oh-my-pi/pi-ai";
 import { ReadToolGroupComponent } from "@oh-my-pi/pi-tui/chat/read-tool-group";
 import type { GalleryFixture, GalleryFixtureState, GalleryResult } from "./types";
 
@@ -48,15 +47,6 @@ const groupedReadDelimitedPath = groupedReadTargets.join(",");
 const groupedReadRepeatedFile = "packages/coding-agent/src/task/render.ts";
 const groupedReadRepeatedRanges = `${groupedReadRepeatedFile}:507-605,1070-1194,1210-1240,1270-1274`;
 
-const GROUPED_READ_USAGE: Usage = {
-	input: 2400,
-	output: 113,
-	cacheRead: 103_000,
-	cacheWrite: 0,
-	totalTokens: 105_513,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
 function textResult(text: string, details?: unknown, isError?: boolean): GalleryResult {
 	return { content: [{ type: "text", text }], details, isError };
 }
@@ -91,13 +81,6 @@ function renderReadGroupFixtureState(state: GalleryFixtureState, width: number, 
 		false,
 		"read-delimited",
 	);
-	component.attachUsage(
-		["read-delimited"],
-		GROUPED_READ_USAGE,
-		5300,
-		2200,
-		new Date(2026, 6, 28, 21, 5, 47).getTime(),
-	);
 
 	if (state === "error") {
 		component.updateResult(
@@ -105,18 +88,10 @@ function renderReadGroupFixtureState(state: GalleryFixtureState, width: number, 
 			false,
 			"read-ranges",
 		);
-		component.attachUsage(
-			["read-ranges"],
-			GROUPED_READ_USAGE,
-			4700,
-			1900,
-			new Date(2026, 6, 28, 21, 5, 52).getTime(),
-		);
 		return component.render(width);
 	}
 
 	component.updateResult(textResult("Read four render.ts ranges."), false, "read-ranges");
-	component.attachUsage(["read-ranges"], GROUPED_READ_USAGE, 4700, 1900, new Date(2026, 6, 28, 21, 5, 52).getTime());
 	return component.render(width);
 }
 

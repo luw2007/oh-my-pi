@@ -72,6 +72,13 @@ export type FirstResultViewportRepaint<TArgs = unknown> =
 	| boolean
 	| ((args: TArgs, options: RenderResultOptions) => boolean);
 
+export const TOOL_ACTIVITY_KINDS = ["agent", "edit", "command", "search", "read"] as const;
+export type ToolActivityKind = (typeof TOOL_ACTIVITY_KINDS)[number];
+export interface ToolActivityTally {
+	readonly kind: ToolActivityKind;
+	readonly count?: number;
+}
+
 /** Semantic activity text consumed by the transcript's generic compact card. */
 export interface ToolActivitySummary {
 	label: string;
@@ -149,6 +156,8 @@ export interface NativeToolView {
  * hook may return `undefined` to paint nothing for that phase.
  */
 export interface ToolRenderer<TArgs = unknown, TDetails = unknown> {
+	/** Pure, from final args only; undefined counts as a generic tool call. */
+	activityTally?(args: TArgs): ToolActivityTally | undefined;
 	renderCall(args: TArgs, options: RenderResultOptions, theme: Theme): Component | undefined;
 	renderResult(
 		result: ToolRenderResult<TDetails>,

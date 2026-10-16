@@ -56,6 +56,7 @@ const COLLAPSED_MATCH_LIMIT = PREVIEW_LIMITS.COLLAPSED_LINES * 2;
 
 /** Render AST grep calls and results. */
 export const astGrepToolRenderer = {
+	activityTally: () => ({ kind: "search" as const }),
 	inline: true,
 	renderCall(args: AstGrepRenderArgs, _options: RenderResultOptions, uiTheme: Theme): Component {
 		const meta: string[] = [];

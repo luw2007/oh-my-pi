@@ -5,7 +5,7 @@ import { renderForScrollback } from "../components/image";
 import { col } from "../native/describe";
 import type { NativeNode } from "../native/node";
 import { isNativeSettled, settleNative } from "../native/settle";
-import { isUsageRowBlock } from "../overlays/usage-row";
+import { isUsageRowVisible } from "../overlays/usage-row";
 import { isToolActivityComponent } from "./tool-activity";
 
 /** Shared animation time supplied by the constrained transcript root. */
@@ -385,13 +385,13 @@ export class TranscriptContainer extends Container {
 	/**
 	 * Whether a superseded snapshot block (a repeated `wait` poll) may be
 	 * replaced by its successor. Beyond {@link canRemoveBlock}, a block directly
-	 * above a usage row stays: that row describes the turn the block belongs to,
-	 * and removing the block would leave a usage-only turn (#12248).
+	 * above a footer currently showing usage stays: that row describes the
+	 * request the block belongs to, so removal would leave usage alone (#12248).
 	 */
 	canDisplaceBlock(component: Component): boolean {
 		if (!this.canRemoveBlock(component)) return false;
 		const next = this.children[this.children.indexOf(component) + 1];
-		return next === undefined || !isUsageRowBlock(next);
+		return next === undefined || !isUsageRowVisible(next);
 	}
 
 	/** Lifecycle state per block in transcript order (diagnostics and tests). */

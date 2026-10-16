@@ -451,6 +451,7 @@ function toBashRenderArgs<TArgs>(args: TArgs | undefined, config: ShellRendererC
 /** Builds a shell transcript renderer with caller-supplied command labels. */
 export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 	return {
+		activityTally: () => ({ kind: "command" as const }),
 		renderCall(args: TArgs, options: RenderResultOptions, uiTheme: Theme): Component {
 			const renderArgs = toBashRenderArgs(args, config);
 			// Highlighting the whole (possibly still-streaming) command is the

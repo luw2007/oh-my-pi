@@ -183,6 +183,7 @@ const debugResultMemo = new OwnerMemo<NativeToolView | undefined>();
 
 /** Renders debugger calls and captured execution snapshots. */
 export const debugToolRenderer = {
+	activityTally: () => ({ kind: "command" as const }),
 	animatedPartialResult: true,
 	renderCall(args: DebugRenderArgs, _options: RenderResultOptions, theme: Theme): Component {
 		const text = renderStatusLine({ icon: "pending", title: "Debug", description: summarizeDebugCall(args) }, theme);

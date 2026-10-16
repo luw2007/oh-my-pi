@@ -110,6 +110,7 @@ function globNativeHead(args: GlobRenderArgs | undefined, meta: readonly string[
 
 /** Render glob calls and results in the transcript. */
 export const globToolRenderer = {
+	activityTally: () => ({ kind: "search" as const }),
 	inline: true,
 	renderCall(args: GlobRenderArgs, _options: RenderResultOptions, uiTheme: Theme): Component {
 		const meta: string[] = [];

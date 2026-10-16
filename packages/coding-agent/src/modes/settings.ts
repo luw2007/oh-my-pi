@@ -653,7 +653,7 @@ export const cfgDisplayHideToolActivity = register({
 		tab: "appearance",
 		group: "Display",
 		label: "Hide Tool Activity",
-		description: "Hide model-initiated tool calls and results from the transcript",
+		description: "Replace model-initiated tool calls and results with per-request activity counts",
 	},
 });
 
@@ -665,7 +665,7 @@ export const cfgDisplayShowTokenUsage = register({
 		tab: "appearance",
 		group: "Display",
 		label: "Show Token Usage",
-		description: "Show per-turn token usage on assistant messages",
+		description: "Show token usage for the latest assistant request only",
 	},
 });
 

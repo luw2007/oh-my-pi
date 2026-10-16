@@ -1077,6 +1077,7 @@ function sliceCollapsedDiffRows(
 
 /** Render edit previews and completed file diffs. */
 export const editToolRenderer = {
+	activityTally: () => ({ kind: "edit" as const }),
 	mergeCallAndResult: true,
 	/** Compact one-line activity: operation + target path instead of the payload's first line. */
 	activitySummary(args: unknown, context: ToolActivityContext): ToolActivitySummary {

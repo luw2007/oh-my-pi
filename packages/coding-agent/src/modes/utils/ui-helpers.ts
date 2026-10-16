@@ -33,7 +33,7 @@ import {
 	routeLateDiagnostics,
 } from "@oh-my-pi/pi-tui/chat/late-diagnostics-message";
 import {
-	groupedReadUsageCallIds,
+	groupedReadCallIds,
 	ReadToolGroupComponent,
 	readArgsCollapseIntoGroup,
 } from "@oh-my-pi/pi-tui/chat/read-tool-group";
@@ -50,7 +50,14 @@ import {
 	toolRenderName,
 } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TranscriptBlock, TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
-import { createUsageRowBlock, formatUsageModel, turnElapsedMs } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import { requestFooterInput } from "@oh-my-pi/pi-tui/chat/request-footer";
+import {
+	appendUsageRow,
+	demoteLatestUsageRow,
+	type RequestFooterInput,
+	transferLatestUsageRow,
+	turnElapsedMs,
+} from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { UserMessageComponent } from "@oh-my-pi/pi-tui/chat/user-message";
 import { decodeStreamedToolArgs, streamingStringKeysForTool } from "../../modes/controllers/tool-args-reveal";
 import {
@@ -87,7 +94,6 @@ import {
 } from "@oh-my-pi/pi-tui/prompt/interactive-context-helpers";
 import {
 	assistantHasVisibleContent,
-	assistantUsageIsBilled,
 	buildAsyncResultBlock,
 	buildFileMentionBlock,
 	buildIrcMessageCard,
@@ -404,6 +410,7 @@ export class UiHelpers {
 				break;
 			}
 			case "assistant": {
+				demoteLatestUsageRow(this.ctx.chatContainer);
 				const cached = options?.reuseSettledComponent
 					? this.ctx.transcriptMessageComponents.get(message)
 					: undefined;
@@ -491,52 +498,25 @@ export class UiHelpers {
 		let readGroup: ReadToolGroupComponent | null = null;
 		const readToolCallArgs = new Map<string, Record<string, unknown>>();
 		const readToolCallAssistantComponents = new Map<string, AssistantMessageComponent>();
-		// Defer per-turn metrics until the turn's tool results have materialized.
-		// Read-only invisible turns attach the metrics to their shared compact
-		// group; every other turn keeps the standalone row below its tool blocks.
-		let pendingUsage: Usage | undefined;
-		let pendingUsageDuration: number | undefined;
-		let pendingUsageTtft: number | undefined;
-		let pendingUsageTimestamp: number | undefined;
-		let pendingReadUsageCallIds: string[] | undefined;
-		let pendingUsageTurnElapsed: number | undefined;
-		let pendingUsageModel: string | undefined;
+		// Defer each request footer until its tool results have materialized.
+		let pendingFooter: RequestFooterInput | undefined;
+		let pendingReadCallIds: string[] | undefined;
+		let pendingRequest = false;
 		let turnStartedAt: number | undefined;
 		const flushPendingUsage = () => {
-			if (!pendingUsage) return;
-			const usageAttached =
-				pendingReadUsageCallIds !== undefined &&
-				(readGroup?.attachUsage(
-					pendingReadUsageCallIds,
-					pendingUsage,
-					pendingUsageDuration,
-					pendingUsageTtft,
-					pendingUsageTimestamp,
-					pendingUsageTurnElapsed,
-					pendingUsageModel,
-				) ??
-					false);
-			if (!usageAttached) {
+			if (!pendingRequest) return;
+			if (!pendingReadCallIds || !pendingReadCallIds.every(id => readGroup?.hasEntry(id))) {
 				readGroup?.seal();
 				readGroup = null;
-				this.ctx.chatContainer.addChild(
-					createUsageRowBlock(
-						pendingUsage,
-						pendingUsageDuration,
-						pendingUsageTtft,
-						pendingUsageTimestamp,
-						pendingUsageTurnElapsed,
-						pendingUsageModel,
-					),
-				);
 			}
-			pendingUsage = undefined;
-			pendingUsageDuration = undefined;
-			pendingUsageTtft = undefined;
-			pendingUsageTimestamp = undefined;
-			pendingReadUsageCallIds = undefined;
-			pendingUsageTurnElapsed = undefined;
-			pendingUsageModel = undefined;
+			if (pendingFooter) appendUsageRow(this.ctx.chatContainer, pendingFooter);
+			// Retire a billed poll while its footer still protects it from
+			// displacement. The next request demotes that footer's metrics, but
+			// must not reopen the completed poll's history for replacement.
+			if (waitingPoll && !this.ctx.chatContainer.canDisplaceBlock(waitingPoll)) resolveWaitingPoll();
+			pendingFooter = undefined;
+			pendingReadCallIds = undefined;
+			pendingRequest = false;
 		};
 		// Rebuild-time mirror of the event controller's displaceable-poll
 		// bookkeeping: a `wait` that found every watched job still running is
@@ -741,18 +721,21 @@ export class UiHelpers {
 						new StrippedToolCallsPlaceholder(strippedToolCalls, !this.ctx.hideToolActivity),
 					);
 				}
-				pendingUsage =
-					cfgDisplayShowTokenUsage.get(this.ctx.settings) && assistantUsageIsBilled(message.usage)
-						? message.usage
-						: undefined;
-				pendingUsageDuration = message.duration;
-				pendingUsageTtft = message.ttft;
-				pendingUsageTimestamp = message.timestamp;
-				pendingUsageModel = formatUsageModel(message.provider, message.model, message.reasoningEffort, message.upstreamModel);
-				pendingReadUsageCallIds = pendingUsage ? groupedReadUsageCallIds(message) : undefined;
-				pendingUsageTurnElapsed = cfgDisplayShowTurnTime.get(this.ctx.settings)
-					? turnElapsedMs(turnStartedAt, message)
-					: undefined;
+				pendingFooter = requestFooterInput(
+					message,
+					{
+						getTool: name => this.ctx.viewSession.getToolByName(name),
+						isBuiltInTool: name => this.ctx.viewSession.hasBuiltInTool(name),
+					},
+					{
+						showUsage: cfgDisplayShowTokenUsage.get(this.ctx.settings),
+						turnElapsedMs: cfgDisplayShowTurnTime.get(this.ctx.settings)
+							? turnElapsedMs(turnStartedAt, message)
+							: undefined,
+					},
+				);
+				pendingReadCallIds = groupedReadCallIds(message);
+				pendingRequest = true;
 			} else if (message.role === "toolResult") {
 				if (options.preservedLiveToolCallIds?.has(message.toolCallId)) continue;
 				const pendingReadComponent = this.ctx.pendingTools.get(message.toolCallId);
@@ -1131,6 +1114,7 @@ export class UiHelpers {
 					visibleChatContainer.addChild(child);
 				}
 			}
+			transferLatestUsageRow(stagedChatContainer, visibleChatContainer);
 			committed = true;
 
 			// Show compaction info if session was compacted.

@@ -17,7 +17,12 @@ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ExtensionRunner } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
 import { ChatTranscriptBuilder } from "@oh-my-pi/pi-tui/chat/chat-transcript-builder";
-import { formatUsageModel, formatUsageRow } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import {
+	formatUsageModel,
+	formatUsageRow,
+	isUsageRowBlock,
+	isUsageRowVisible,
+} from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/event-controller";
 import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
@@ -139,11 +144,17 @@ describe("formatUsageRow turn elapsed", () => {
 		for (const actual of ["traex/gpt-5.6-luna:medium", "traex/gpt-5.6-luna"]) {
 			const label = formatUsageModel("magpie", "group/iq-task", Effort.High, actual);
 			expect(label).toBe(actual);
-			expect(formatUsageRow(assistantMessage().usage as Usage, undefined, undefined, undefined, undefined, label)).toContain(actual);
+			expect(
+				formatUsageRow(assistantMessage().usage as Usage, undefined, undefined, undefined, undefined, label),
+			).toContain(actual);
 		}
 		expect(formatUsageModel("magpie", "group/iq-task", Effort.High)).toBe("magpie/group/iq-task:high");
-		expect(formatUsageModel("magpie", "group/iq-task", Effort.High, "gpt-5.6-luna")).toBe("magpie/group/iq-task:high");
-		expect(formatUsageModel("openrouter", "requested", Effort.High, "traex/actual")).toBe("openrouter/requested:high");
+		expect(formatUsageModel("magpie", "group/iq-task", Effort.High, "gpt-5.6-luna")).toBe(
+			"magpie/group/iq-task:high",
+		);
+		expect(formatUsageModel("openrouter", "requested", Effort.High, "traex/actual")).toBe(
+			"openrouter/requested:high",
+		);
 	});
 });
 
@@ -198,7 +209,9 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 			reopened = await SessionManager.open(manager.getSessionFile()!, dir);
 			const entries = reopened.getEntries();
 			const saved = entries.find(entry => entry.type === "message" && entry.message.role === "assistant");
-			expect(saved?.type === "message" && saved.message.role === "assistant" && saved.message.upstreamProvider).toBe("traex");
+			expect(saved?.type === "message" && saved.message.role === "assistant" && saved.message.upstreamProvider).toBe(
+				"traex",
+			);
 			const transcript = builder();
 			transcript.rebuild(entries.filter(isTranscriptEntry));
 			const rendered = renderedText(transcript.container);
@@ -250,10 +263,10 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 			timestamp: RESPONSE_CREATED_AT + 5_000,
 		} as unknown as AgentMessage;
 		transcript.rebuild(toEntries([userMessage(), assistantMessage(), developer, assistantMessage()]));
-		// Only the user turn's row carries the delta; the auto-continuation run
-		// (developer message, no user prompt) must not inherit the user anchor.
+		// The user request is historical now; the latest synthetic request must
+		// neither inherit its prompt anchor nor reveal the demoted delta.
 		const occurrences = renderedText(transcript.container).match(/Δ 1m/g)?.length ?? 0;
-		expect(occurrences).toBe(1);
+		expect(occurrences).toBe(0);
 	});
 	it("keeps the prompt anchor across a persisted same-turn continuation reminder", () => {
 		cfgDisplayShowTurnTime.set(settings, true);
@@ -268,7 +281,7 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 		} as unknown as AgentMessage;
 		transcript.rebuild(toEntries([userMessage(), assistantMessage(), reminder, assistantMessage()]));
 		const occurrences = renderedText(transcript.container).match(/Δ 1m/g)?.length ?? 0;
-		expect(occurrences).toBe(2);
+		expect(occurrences).toBe(1);
 	});
 	it("anchors a user-initiated continue shortcut to its own submission time", () => {
 		cfgDisplayShowTurnTime.set(settings, true);
@@ -328,10 +341,10 @@ describe("ChatTranscriptBuilder turn elapsed", () => {
 			timestamp: RESPONSE_CREATED_AT + 5_000,
 		} as unknown as AgentMessage;
 		transcript.rebuild(toEntries([userMessage(), assistantMessage(), redirect, assistantMessage()]));
-		// The real user prompt anchors both turns; the redirect adds no reset, so
-		// the second assistant row still measures from the initiating prompt.
+		// The latest row still measures from the initiating prompt; the earlier
+		// request's metrics have been demoted.
 		const occurrences = renderedText(transcript.container).match(/Δ 1m/g)?.length ?? 0;
-		expect(occurrences).toBe(2);
+		expect(occurrences).toBe(1);
 	});
 });
 
@@ -341,28 +354,11 @@ describe("UiHelpers.renderSessionContext turn elapsed", () => {
 	});
 
 	function makeHarness(turnTimeOn: boolean): { ctx: InteractiveModeContext; helpers: UiHelpers } {
-		const ctx = {
-			chatContainer: new Container(),
-			transcriptMessageComponents: new WeakMap(),
-			pendingTools: new Map(),
-			ui: { requestRender: vi.fn() },
-			statusLine: { invalidate: vi.fn() },
-			updateEditorBorderColor: vi.fn(),
+		const ctx = createInteractiveModeContext({
 			settings: Settings.isolated({ "display.showTokenUsage": true, "display.showTurnTime": turnTimeOn }),
-			addMessageToChat: (message: AgentMessage) => helpers.addMessageToChat(message),
-			session: {
-				retryAttempt: 0,
-				getToolByName: () => undefined,
-				sessionManager: { getCwd: () => process.cwd(), putBlobSync: () => undefined },
-			},
-			get viewSession() {
-				return (this as typeof ctx).session;
-			},
-			toolOutputExpanded: false,
-			hideThinkingBlock: false,
-			clearTransientSessionUi: () => {},
-		} as unknown as InteractiveModeContext;
+		});
 		const helpers = new UiHelpers(ctx);
+		ctx.addMessageToChat = helpers.addMessageToChat.bind(helpers);
 		return { ctx, helpers };
 	}
 
@@ -376,10 +372,17 @@ describe("UiHelpers.renderSessionContext turn elapsed", () => {
 
 	it("renders Magpie's actual model when rebuilding session context", () => {
 		const { ctx, helpers } = makeHarness(false);
-		helpers.renderSessionContext({ messages: [userMessage(), assistantMessage({
-			provider: "magpie", model: "group/iq-task", reasoningEffort: Effort.High,
-			upstreamModel: "traex/gpt-5.6-luna",
-		})] } as SessionContext);
+		helpers.renderSessionContext({
+			messages: [
+				userMessage(),
+				assistantMessage({
+					provider: "magpie",
+					model: "group/iq-task",
+					reasoningEffort: Effort.High,
+					upstreamModel: "traex/gpt-5.6-luna",
+				}),
+			],
+		} as SessionContext);
 		const rendered = renderedText(ctx.chatContainer);
 		expect(rendered).toContain("traex/gpt-5.6-luna");
 		expect(rendered).not.toContain("magpie/group/iq-task");
@@ -390,6 +393,24 @@ describe("UiHelpers.renderSessionContext turn elapsed", () => {
 		const { ctx, helpers } = makeHarness(false);
 		helpers.renderSessionContext({ messages: [userMessage(), assistantMessage()] } as SessionContext);
 		expect(renderedText(ctx.chatContainer)).not.toContain(TURN_ELAPSED_LABEL);
+	});
+
+	it("rebuild then addMessageToChat demotes the replayed footer", () => {
+		const { ctx, helpers } = makeHarness(true);
+		helpers.renderSessionContext({ messages: [userMessage(), assistantMessage()] } as SessionContext);
+		const footer = ctx.chatContainer.children.find(isUsageRowBlock)!;
+		expect(isUsageRowVisible(footer)).toBe(true);
+		helpers.addMessageToChat(assistantMessage());
+		expect(isUsageRowVisible(footer)).toBe(false);
+	});
+
+	it("showTokenUsage=false: addMessageToChat omits usage metrics", () => {
+		const { ctx, helpers } = makeHarness(true);
+		cfgDisplayShowTokenUsage.set(ctx.settings, false);
+		helpers.addMessageToChat(assistantMessage());
+		expect(renderedText(ctx.chatContainer)).toContain("done");
+		expect(renderedText(ctx.chatContainer)).not.toContain(USAGE_LABEL);
+		expect(ctx.chatContainer.children.filter(isUsageRowVisible)).toHaveLength(0);
 	});
 });
 
@@ -434,6 +455,34 @@ describe("focus-attach mid-turn keeps the prompt→yield delta", () => {
 		>);
 	}
 
+	it("demotion on second assistant message start (live path)", async () => {
+		const { controller, chatContainer } = createFixture();
+		await driveAssistantTurn(controller, assistantMessage());
+		const footer = chatContainer.children.find(isUsageRowBlock)!;
+		expect(isUsageRowVisible(footer)).toBe(true);
+		await controller.handleEvent({ type: "message_start", message: assistantMessage() } as Extract<
+			AgentSessionEvent,
+			{ type: "message_start" }
+		>);
+		expect(chatContainer.children).toContain(footer);
+		expect(isUsageRowVisible(footer)).toBe(false);
+		expect(renderedText(chatContainer)).not.toContain(USAGE_LABEL);
+		await controller.handleEvent({ type: "message_end", message: assistantMessage() } as Extract<
+			AgentSessionEvent,
+			{ type: "message_end" }
+		>);
+		expect(chatContainer.children.filter(isUsageRowBlock).map(isUsageRowVisible)).toEqual([false, true]);
+	});
+
+	it("showTokenUsage=false: no usage metrics row", async () => {
+		cfgDisplayShowTokenUsage.set(settings, false);
+		const { controller, chatContainer } = createFixture();
+		await driveAssistantTurn(controller, assistantMessage());
+		expect(renderedText(chatContainer)).toContain("done");
+		expect(renderedText(chatContainer)).not.toContain(USAGE_LABEL);
+		expect(chatContainer.children.filter(isUsageRowVisible)).toHaveLength(0);
+	});
+
 	it("hands the replayed user timestamp to the controller so the live message_end row shows the delta", async () => {
 		const { controller, helpers, chatContainer, streamState } = createFixture();
 		streamState.isStreaming = true;
@@ -460,10 +509,15 @@ describe("focus-attach mid-turn keeps the prompt→yield delta", () => {
 
 	it("renders Magpie's actual model on live message_end", async () => {
 		const { controller, chatContainer } = createFixture();
-		await driveAssistantTurn(controller, assistantMessage({
-			provider: "magpie", model: "group/iq-task", reasoningEffort: Effort.High,
-			upstreamModel: "traex/gpt-5.6-luna:medium",
-		}));
+		await driveAssistantTurn(
+			controller,
+			assistantMessage({
+				provider: "magpie",
+				model: "group/iq-task",
+				reasoningEffort: Effort.High,
+				upstreamModel: "traex/gpt-5.6-luna:medium",
+			}),
+		);
 		const rendered = renderedText(chatContainer);
 		expect(rendered).toContain("traex/gpt-5.6-luna:medium");
 		expect(rendered).not.toContain("magpie/group/iq-task");
@@ -492,9 +546,9 @@ describe("focus-attach mid-turn keeps the prompt→yield delta", () => {
 		await controller.handleEvent({ type: "agent_start" } as Extract<AgentSessionEvent, { type: "agent_start" }>);
 		await driveAssistantTurn(controller, assistantMessage());
 
-		// Turn 1 keeps its row's delta; the synthetic run must not add another.
+		// The completed turn is demoted; the synthetic run must not show a stale delta.
 		const occurrences = renderedText(chatContainer).match(/Δ 1m/g)?.length ?? 0;
-		expect(occurrences).toBe(1);
+		expect(occurrences).toBe(0);
 	});
 	it("seeds the delta from a user-invoked skill prompt in the live path", async () => {
 		const { controller, chatContainer } = createFixture();
@@ -541,7 +595,7 @@ describe("focus-attach mid-turn keeps the prompt→yield delta", () => {
 		await driveAssistantTurn(controller, assistantMessage());
 
 		const occurrences = renderedText(chatContainer).match(/Δ 1m/g)?.length ?? 0;
-		expect(occurrences).toBe(1); // the synthetic run's row adds no delta
+		expect(occurrences).toBe(0); // demoted history and the synthetic row show no delta
 	});
 });
 describe("AgentSession synthetic follow-up marking", () => {

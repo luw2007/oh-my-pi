@@ -835,6 +835,7 @@ function evalCellBox(cell: EvalCellRun, index: number, total: number): NativeNod
 
 /** Render eval code cells, structured display output, and progress events. */
 export const evalToolRenderer = {
+	activityTally: () => ({ kind: "command" as const }),
 	animatedPendingPreview: true,
 	animatedPartialResult: true,
 	renderCall(args: EvalRenderArgs, options: RenderResultOptions, uiTheme: Theme): Component {

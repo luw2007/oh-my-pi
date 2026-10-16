@@ -3,7 +3,7 @@ import { parseStreamingJson } from "@oh-my-pi/pi-utils";
 import { type Component, Container, Text } from "../index";
 import type { Theme } from "../theme/theme";
 import { replaceTabs } from "../render/render-utils";
-import type { RenderResultOptions, ToolActivitySummary, ToolRenderer } from "./renderer";
+import type { RenderResultOptions, ToolActivitySummary, ToolActivityTally, ToolRenderer } from "./renderer";
 import { describeDefaultToolExecution, renderDefaultToolExecution } from "./default-renderer";
 import type { NativeToolView } from "./renderer";
 import { text } from "../native/describe";
@@ -51,6 +51,11 @@ let rendererLookup: ((name: string) => ToolRenderer | undefined) | undefined;
 /** Wire the wrapped-renderer lookup. Called once by `renderers.ts`. */
 export function setXdevRendererLookup(lookup: (name: string) => ToolRenderer | undefined): void {
 	rendererLookup = lookup;
+}
+
+/** Classify a device write using the same static renderer lookup as device rendering. */
+export function xdevActivityTally(name: string, content: unknown): ToolActivityTally | undefined {
+	return rendererLookup?.(name)?.activityTally?.(decodeInnerArgs(content));
 }
 
 /** Decode the (possibly partially streamed) inner args JSON string into display args. */

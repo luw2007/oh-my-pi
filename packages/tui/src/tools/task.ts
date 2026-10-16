@@ -2145,6 +2145,10 @@ const taskResultMemo = new OwnerMemo<NativeToolView | undefined>();
 
 /** Renders task calls and their live or settled agent results. */
 export const taskToolRenderer = {
+	activityTally: (args: TaskParams) => ({
+		kind: "agent" as const,
+		count: Array.isArray(args?.tasks) ? args.tasks.length : 1,
+	}),
 	renderCall,
 	renderResult,
 	describeCall(args: TaskParams, options: RenderResultOptions): NativeToolView | undefined {

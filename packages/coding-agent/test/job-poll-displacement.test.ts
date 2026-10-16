@@ -12,12 +12,19 @@
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ToolExecutionComponent, type ToolExecutionHandle } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/event-controller";
 import { cfgDisplayShowTokenUsage } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { ChatTranscriptBuilder } from "@oh-my-pi/pi-tui/chat/chat-transcript-builder";
-import { createUsageRowBlock } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import {
+	appendUsageRow,
+	createUsageRowBlock,
+	demoteLatestUsageRow,
+	isUsageRowBlock,
+	isUsageRowVisible,
+} from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { UiHelpers } from "@oh-my-pi/pi-coding-agent/modes/utils/ui-helpers";
 import type { SessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
@@ -166,7 +173,7 @@ describe("EventController displaces consecutive waiting polls", () => {
 		const pendingTools = new Map<string, ToolExecutionHandle>();
 		const ctx = createInteractiveModeContext({ pendingTools });
 		const children = ctx.chatContainer.children;
-		return { controller: new EventController(ctx), children, pendingTools };
+		return { controller: new EventController(ctx), children, pendingTools, chatContainer: ctx.chatContainer };
 	}
 
 	async function runPoll(controller: EventController, children: Component[], toolCallId: string) {
@@ -239,6 +246,31 @@ describe("EventController displaces consecutive waiting polls", () => {
 		expect(children.indexOf(first)).toBe(children.indexOf(metrics) - 1);
 		expect(Bun.stripANSI(first.render(100).join("\n"))).toContain("job 0");
 		expect(Bun.stripANSI(metrics.render(100).join("\n"))).toContain("4.2K");
+	});
+
+	it("displaces a waiting snapshot once its previous footer is demoted", async () => {
+		const { controller, children, chatContainer } = createFixture();
+		const first = await runPoll(controller, children, "t1");
+		chatContainer.setToolActivityVisible(false);
+		appendUsageRow(chatContainer, {
+			activity: "1 tool call",
+			usage: {
+				input: 4242,
+				output: 7,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 4249,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		});
+		const footer = children.at(-1)!;
+		expect(isUsageRowVisible(footer)).toBe(true);
+		demoteLatestUsageRow(chatContainer);
+		await runPoll(controller, children, "t2");
+		expect(children).not.toContain(first);
+		expect(children).toContain(footer);
+		expect(isUsageRowVisible(footer)).toBe(false);
+		expect(footer.render(120)).toEqual([]);
 	});
 
 	it("seals the waiting poll in place when a different tool runs next", async () => {
@@ -442,39 +474,64 @@ describe("#12248 completed wait turn replay", () => {
 		] satisfies AgentMessage[];
 	}
 
-	it.each(["session", "transcript"] as const)("retains each wait with its original metrics in %s replay", mode => {
-		const messages = [...waitTurn("w1", 4242), ...waitTurn("w2", 2121)];
-		let children: Component[];
-		if (mode === "session") {
-			const ctx = createInteractiveModeContext({ settings: Settings.isolated({ "display.showTokenUsage": true }) });
-			const helpers = new UiHelpers(ctx);
-			ctx.addMessageToChat = helpers.addMessageToChat.bind(helpers);
-			helpers.renderSessionContext({ messages } as SessionContext);
-			children = ctx.chatContainer.children;
-		} else {
-			const builder = new ChatTranscriptBuilder({ ui: uiStub, cwd: process.cwd(), requestRender() {} });
-			builder.rebuild(
-				messages.map((message, i) => ({
-					type: "message" as const,
-					id: `m${i}`,
-					parentId: i ? `m${i - 1}` : null,
-					timestamp: new Date(0).toISOString(),
-					message,
-				})),
+	it.each(["session", "transcript"] as const)(
+		"retains wait history with only the latest metrics in %s replay",
+		mode => {
+			const messages = [...waitTurn("w1", 4242), ...waitTurn("w2", 2121)];
+			let children: Component[];
+			if (mode === "session") {
+				const ctx = createInteractiveModeContext({
+					settings: Settings.isolated({ "display.showTokenUsage": true }),
+				});
+				const helpers = new UiHelpers(ctx);
+				ctx.addMessageToChat = helpers.addMessageToChat.bind(helpers);
+				helpers.renderSessionContext({ messages } as SessionContext);
+				children = ctx.chatContainer.children;
+			} else {
+				const builder = new ChatTranscriptBuilder({ ui: uiStub, cwd: process.cwd(), requestRender() {} });
+				builder.rebuild(
+					messages.map((message, i) => ({
+						type: "message" as const,
+						id: `m${i}`,
+						parentId: i ? `m${i - 1}` : null,
+						timestamp: new Date(0).toISOString(),
+						message,
+					})),
+				);
+				children = builder.container.children;
+			}
+			const polls = children.filter(
+				(child): child is ToolExecutionComponent => child instanceof ToolExecutionComponent,
 			);
-			children = builder.container.children;
+			for (const poll of polls) poll.seal();
+			expect(polls).toHaveLength(2);
+			const output = children.map(child => Bun.stripANSI(child.render(120).join("\n")));
+			for (const poll of polls) expect(output[children.indexOf(poll)]).toContain("job 0");
+			const footers = children.filter(isUsageRowBlock);
+			expect(footers).toHaveLength(2);
+			expect(footers.map(isUsageRowVisible)).toEqual([false, true]);
+			expect(output.join("\n")).not.toContain("4.2K");
+			expect(output.join("\n")).toContain("2.1K");
+			expect(children.indexOf(footers[1]!)).toBeGreaterThan(children.indexOf(polls[1]!));
+		},
+	);
+
+	it("polled job footer demotes previous footer when it lands", async () => {
+		const ctx = createInteractiveModeContext();
+		const controller = new EventController(ctx);
+		for (const [index, input] of [4242, 2121].entries()) {
+			const message = waitTurn(`w${index}`, input)[0] as AssistantMessage;
+			await controller.handleEvent({ type: "message_start", message });
+			await controller.handleEvent({ type: "message_end", message });
+			const footers = ctx.chatContainer.children.filter(isUsageRowBlock);
+			expect(footers).toHaveLength(index + 1);
+			expect(footers.map(isUsageRowVisible)).toEqual(index === 0 ? [true] : [false, true]);
 		}
-		const polls = children.filter(
-			(child): child is ToolExecutionComponent => child instanceof ToolExecutionComponent,
-		);
-		for (const poll of polls) poll.seal();
-		expect(polls).toHaveLength(2);
-		const output = children.map(child => Bun.stripANSI(child.render(120).join("\n")));
-		for (const [i, label] of ["4.2K", "2.1K"].entries()) {
-			const pollIndex = children.indexOf(polls[i]);
-			expect(output[pollIndex]).toContain("job 0");
-			expect(output[pollIndex + 1]).toContain(label);
-			expect(output.filter(text => text.includes(label))).toHaveLength(1);
+		const rendered = ctx.chatContainer.children.map(child => Bun.stripANSI(child.render(120).join("\n"))).join("\n");
+		expect(rendered).not.toContain("4.2K");
+		expect(rendered).toContain("2.1K");
+		for (const component of ctx.chatContainer.children) {
+			if (component instanceof ToolExecutionComponent) component.seal();
 		}
 	});
 });

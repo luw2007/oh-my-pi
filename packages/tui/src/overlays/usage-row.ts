@@ -8,6 +8,19 @@ import { sanitizeDisplayLineField } from "../overlays/extensions/display-text";
 import { formatMetricRow, MetricRow, type MetricSpec } from "../components/metric";
 import { node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeChild, NativeNode } from "../native/node";
+import { Text } from "../components/text";
+import { col, keyed, withHidden } from "../native/describe";
+import type { TranscriptContainer } from "../chrome/transcript-container";
+
+export interface RequestFooterInput {
+	activity?: string;
+	usage?: Usage;
+	durationMs?: number;
+	ttftMs?: number;
+	timestamp?: number;
+	turnElapsedMs?: number;
+	model?: string;
+}
 
 /** Below this the rate is nonsense (cached/instant responses yield absurd tok/s). */
 const MIN_DURATION_MS = 100;
@@ -179,41 +192,67 @@ function usageRowSpecs(
 
 /** Per-turn usage block: a dim metric strip under the turn; natively a wrapping row with a `rate` for throughput. */
 class UsageRowBlock extends Container {
-	readonly #usage: Usage;
-	readonly #durationMs: number | undefined;
-	readonly #ttftMs: number | undefined;
-	readonly #timestamp: number | undefined;
-	readonly #turnElapsedMs: number | undefined;
-	readonly #model: string | undefined;
+	readonly #input: RequestFooterInput;
+	#latest = true;
+	#toolActivityVisible = true;
 	#nativeNode: NativeNode | undefined;
-	/** The terminal's clock {@link #nativeNode} was described with. */
 	#nativeHour12: boolean | undefined;
 
-	constructor(
-		usage: Usage,
-		durationMs?: number,
-		ttftMs?: number,
-		timestamp?: number,
-		turnElapsedMs?: number,
-		model?: string,
-	) {
+	constructor(input: RequestFooterInput) {
 		super();
-		this.#usage = usage;
-		this.#durationMs = durationMs;
-		this.#ttftMs = ttftMs;
-		this.#timestamp = timestamp;
-		this.#turnElapsedMs = turnElapsedMs;
-		this.#model = model;
-		this.addChild(new Spacer(1));
-		this.addChild(
-			new MetricRow(usageRowSpecs(usage, durationMs, ttftMs, timestamp, turnElapsedMs, model), {
-				separator: "  ",
-				overflow: "wrap",
-				paddingX: 1,
-				paddingY: 0,
-				style: text => theme.fg("dim", text),
-			}),
-		);
+		this.#input = input;
+		this.#refresh();
+	}
+
+	isTranscriptBlockFinalized(): boolean {
+		return true;
+	}
+
+	get showsUsage(): boolean {
+		return this.#latest && this.#input.usage !== undefined;
+	}
+
+	demote(): void {
+		if (!this.#latest) return;
+		this.#latest = false;
+		this.#refresh();
+	}
+
+	setToolActivityVisible(visible: boolean): void {
+		if (this.#toolActivityVisible === visible) return;
+		this.#toolActivityVisible = visible;
+		this.#refresh();
+	}
+
+	#refresh(): void {
+		this.#nativeNode = undefined;
+		this.clear();
+		const input = this.#input;
+		const activity = this.#latest && !this.#toolActivityVisible ? input.activity : undefined;
+		if (activity || this.showsUsage) this.addChild(new Spacer(1));
+		if (activity) this.addChild(new Text(theme.fg("dim", activity), 1, 0));
+		if (this.showsUsage && input.usage) {
+			this.addChild(
+				new MetricRow(
+					usageRowSpecs(
+						input.usage,
+						input.durationMs,
+						input.ttftMs,
+						input.timestamp,
+						input.turnElapsedMs,
+						input.model,
+					),
+					{
+						separator: "  ",
+						overflow: "wrap",
+						paddingX: 1,
+						paddingY: 0,
+						style: value => theme.fg("dim", value),
+					},
+				),
+			);
+		}
+		this.invalidate();
 	}
 
 	/**
@@ -226,9 +265,19 @@ class UsageRowBlock extends Container {
 		const hour12 = cx?.hour12;
 		if (this.#nativeNode && this.#nativeHour12 === hour12) return this.#nativeNode;
 		this.#nativeHour12 = hour12;
-		const usage = this.#usage;
+		const children: NativeChild[] = [];
+		if (this.#latest && !this.#toolActivityVisible && this.#input.activity) {
+			children.push(keyed(text([span(this.#input.activity, "dim")]), "activity"));
+		}
+		if (this.showsUsage) children.push(keyed(this.#describeUsage(hour12), "usage"));
+		this.#nativeNode = withHidden(col(children), children.length === 0);
+		return this.#nativeNode;
+	}
+
+	#describeUsage(hour12?: boolean): NativeNode {
+		const usage = this.#input.usage!;
 		const parts: string[] = [];
-		const timestamp = this.#timestamp;
+		const timestamp = this.#input.timestamp;
 		const stamped = timestamp !== undefined && Number.isFinite(timestamp) && timestamp > 0;
 		// Only a 12-hour clock goes through the locale; 24-hour keeps the tooltip's own `HH:mm`.
 		if (stamped) {
@@ -238,29 +287,28 @@ class UsageRowBlock extends Container {
 					: formatUsageTimestamp(timestamp).slice(11, 16),
 			);
 		}
-		if (this.#turnElapsedMs !== undefined && this.#turnElapsedMs > 0) {
-			parts.push(`Δ ${formatDuration(Math.round(this.#turnElapsedMs))}`);
+		if (this.#input.turnElapsedMs !== undefined && this.#input.turnElapsedMs > 0) {
+			parts.push(`Δ ${formatDuration(Math.round(this.#input.turnElapsedMs))}`);
 		}
-		const modelLabel = sanitizeDisplayLineField(this.#model);
+		const modelLabel = sanitizeDisplayLineField(this.#input.model);
 		if (modelLabel) parts.push(modelLabel);
 		parts.push(`in ${formatNumber(usage.input + usage.cacheWrite)}`, `out ${formatNumber(usage.output)}`);
 		if (usage.cacheRead > 0) parts.push(`cache ${formatNumber(usage.cacheRead)}`);
-		if (this.#ttftMs && this.#ttftMs > 0) parts.push(`ttft ${(this.#ttftMs / 1000).toFixed(1)}s`);
+		if (this.#input.ttftMs && this.#input.ttftMs > 0) parts.push(`ttft ${(this.#input.ttftMs / 1000).toFixed(1)}s`);
 		const children: NativeChild[] = [text([span(parts.join(" · "), "dim")])];
-		const tokPerSec = usageThroughput(usage, this.#durationMs);
+		const tokPerSec = usageThroughput(usage, this.#input.durationMs);
 		if (tokPerSec !== undefined) {
 			children.push(
 				text([span(" · ", "dim")]),
 				node("rate", { value: Math.round(tokPerSec * 10) / 10, unit: "tok/s" }),
 			);
 		}
-		this.#nativeNode = row(children, {
+		return row(children, {
 			role: "omp.usage.turn",
 			gap: "none",
 			align: "baseline",
 			...(stamped ? { title: formatUsageTimestamp(timestamp, hour12) } : {}),
 		});
-		return this.#nativeNode;
 	}
 }
 
@@ -286,9 +334,8 @@ export function isUsageRowBlock(component: object): boolean {
 	return usageRowBlocks.has(component as Container);
 }
 
-// `timestamp`, `turnElapsedMs`, and `model` are optional and trail the throughput
-// args to preserve the existing (usage, durationMs, ttftMs) call contract — this
-// function is part of the package's public export surface (./modes/components/*).
+/** New callers pass the whole footer; positional usage remains source-compatible. */
+export function createUsageRowBlock(input: RequestFooterInput): Container;
 export function createUsageRowBlock(
 	usage: Usage,
 	durationMs?: number,
@@ -296,8 +343,55 @@ export function createUsageRowBlock(
 	timestamp?: number,
 	turnElapsedMs?: number,
 	model?: string,
+): Container;
+export function createUsageRowBlock(
+	input: RequestFooterInput | Usage,
+	durationMs?: number,
+	ttftMs?: number,
+	timestamp?: number,
+	turnElapsedMs?: number,
+	model?: string,
 ): Container {
-	const block = new UsageRowBlock(usage, durationMs, ttftMs, timestamp, turnElapsedMs, model);
+	const footer = "input" in input ? { usage: input, durationMs, ttftMs, timestamp, turnElapsedMs, model } : input;
+	const block = new UsageRowBlock(footer);
 	usageRowBlocks.add(block);
 	return block;
+}
+
+const latestUsageRows = new WeakMap<TranscriptContainer, UsageRowBlock>();
+
+export function demoteLatestUsageRow(container: TranscriptContainer): void {
+	latestUsageRows.get(container)?.demote();
+	latestUsageRows.delete(container);
+}
+
+/** Rebuilds stage components off-screen before moving them to the live transcript. */
+export function transferLatestUsageRow(from: TranscriptContainer, to: TranscriptContainer): void {
+	if (from === to) return;
+	const staged = latestUsageRows.get(from);
+	const existing = latestUsageRows.get(to);
+	latestUsageRows.delete(from);
+	// Preserved live children may follow the replayed children. Actual transcript
+	// order, not which container was staged, determines the newest request.
+	const stagedIndex = staged ? to.children.indexOf(staged) : -1;
+	const existingIndex = existing ? to.children.indexOf(existing) : -1;
+	if (existingIndex > stagedIndex) {
+		staged?.demote();
+		return;
+	}
+	existing?.demote();
+	latestUsageRows.delete(to);
+	if (staged && stagedIndex >= 0) latestUsageRows.set(to, staged);
+}
+
+export function appendUsageRow(container: TranscriptContainer, input: RequestFooterInput): void {
+	demoteLatestUsageRow(container);
+	const block = createUsageRowBlock(input) as UsageRowBlock;
+	latestUsageRows.set(container, block);
+	container.addChild(block);
+}
+
+/** The wait-poll displacement guard cares about current usage, not historical counts. */
+export function isUsageRowVisible(component: object): boolean {
+	return component instanceof UsageRowBlock && component.showsUsage;
 }

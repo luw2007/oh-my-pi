@@ -174,6 +174,7 @@ function astEditScopeStats(details: AstEditToolDetails | undefined): NativeNode 
 
 /** Render AST edit calls and results. */
 export const astEditToolRenderer = {
+	activityTally: () => ({ kind: "edit" as const }),
 	inline: true,
 	renderCall(args: AstEditRenderArgs, _options: RenderResultOptions, uiTheme: Theme): Component {
 		const meta: string[] = [];

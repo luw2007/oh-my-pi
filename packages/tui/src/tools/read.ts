@@ -447,6 +447,7 @@ function describeReadImage(block: TaggedReadImageBlock, alt: string): NativeNode
 
 /** Render file, image, and URL reads in the transcript. */
 export const readToolRenderer = {
+	activityTally: () => ({ kind: "read" as const }),
 	activitySummary(args: unknown, _context: ToolActivityContext): ToolActivitySummary {
 		const input = args as ReadRenderArgs | undefined;
 		const rawPath =

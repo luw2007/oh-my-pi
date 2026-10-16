@@ -1,21 +1,30 @@
 /**
  * Regression coverage for per-turn usage placement across transcript rebuilds.
- * Read-only turns keep their metrics inside the compact read group; other
- * assistant turns retain a standalone row below their visible content/tools.
+ * Read-only turns retain compact tool groups while the latest request's metrics
+ * appear in a standalone footer below its visible content/tools.
  */
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ChatTranscriptBuilder } from "@oh-my-pi/pi-tui/chat/chat-transcript-builder";
 import { ReadToolGroupComponent } from "@oh-my-pi/pi-tui/chat/read-tool-group";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
+import { TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
+import {
+	appendUsageRow,
+	demoteLatestUsageRow,
+	isUsageRowBlock,
+	isUsageRowVisible,
+	transferLatestUsageRow,
+} from "@oh-my-pi/pi-tui/overlays/usage-row";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { UiHelpers } from "@oh-my-pi/pi-coding-agent/modes/utils/ui-helpers";
 import type { SessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
-import { Container, TUI } from "@oh-my-pi/pi-tui";
+import { TUI } from "@oh-my-pi/pi-tui";
 import { formatNumber } from "@oh-my-pi/pi-utils";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal";
+import { createInteractiveModeContext } from "./helpers/interactive-mode-context";
 
 import { cfgDisplayShowTokenUsage } from "@oh-my-pi/pi-coding-agent/modes/settings";
 
@@ -63,28 +72,11 @@ function readTurn(
 }
 
 function makeHarness(showTokenUsage: boolean): { ctx: InteractiveModeContext; helpers: UiHelpers } {
-	const ctx = {
-		chatContainer: new Container(),
-		transcriptMessageComponents: new WeakMap(),
-		pendingTools: new Map(),
-		ui: { requestRender: vi.fn() },
-		statusLine: { invalidate: vi.fn() },
-		updateEditorBorderColor: vi.fn(),
+	const ctx = createInteractiveModeContext({
 		settings: Settings.isolated({ "display.showTokenUsage": showTokenUsage }),
-		addMessageToChat: (message: AgentMessage) => helpers.addMessageToChat(message),
-		session: {
-			retryAttempt: 0,
-			getToolByName: () => undefined,
-			sessionManager: { getCwd: () => process.cwd() },
-		},
-		get viewSession() {
-			return (this as typeof ctx).session;
-		},
-		toolOutputExpanded: false,
-		hideThinkingBlock: false,
-		clearTransientSessionUi: () => {},
-	} as unknown as InteractiveModeContext;
+	});
 	const helpers = new UiHelpers(ctx);
+	ctx.addMessageToChat = helpers.addMessageToChat.bind(helpers);
 	return { ctx, helpers };
 }
 
@@ -93,7 +85,15 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 		await initTheme();
 	});
 
-	it("nests the usage row inside the read group for a read-only turn", () => {
+	beforeEach(async () => {
+		await Settings.init({ inMemory: true, cwd: process.cwd() });
+		cfgDisplayShowTokenUsage.set(settings, true);
+	});
+	afterEach(() => {
+		resetSettingsForTest();
+	});
+
+	it("places the latest usage row after the read group for a read-only turn", () => {
 		const { ctx, helpers } = makeHarness(true);
 		helpers.renderSessionContext({ messages: readTurn() } as SessionContext);
 
@@ -103,11 +103,13 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 		);
 		expect(group).toBeDefined();
 
-		const rendered = group!.render(120).join("\n");
-		expect(rendered).toContain(USAGE_LABEL);
-		expect(rendered).toContain(USAGE_TS_LABEL);
-		expect(children[children.length - 1]).toBe(group!);
-		expect(children.filter(component => component.render(120).join("\n").includes(USAGE_LABEL))).toHaveLength(1);
+		const footer = children[children.length - 1]!;
+		expect(isUsageRowBlock(footer)).toBe(true);
+		expect(isUsageRowVisible(footer)).toBe(true);
+		expect(children.indexOf(group!)).toBeLessThan(children.indexOf(footer));
+		expect(group!.render(120).join("\n")).not.toContain(USAGE_LABEL);
+		expect(footer.render(120).join("\n")).toContain(USAGE_LABEL);
+		expect(footer.render(120).join("\n")).toContain(USAGE_TS_LABEL);
 	});
 
 	it("interleaves consecutive read-only turns with their paths in one group", () => {
@@ -119,14 +121,26 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 			(component): component is ReadToolGroupComponent => component instanceof ReadToolGroupComponent,
 		);
 		expect(groups).toHaveLength(1);
-		const lines = Bun.stripANSI(groups[0]!.render(120).join("\n")).split("\n");
-		const fooIndex = lines.findIndex(line => line.includes("src/foo.ts"));
-		const firstUsageIndex = lines.findIndex(line => line.includes(USAGE_TS_LABEL));
-		const barIndex = lines.findIndex(line => line.includes("src/bar.ts"));
-		const secondUsageIndex = lines.findIndex(line => line.includes(SECOND_USAGE_TS_LABEL));
-		expect(fooIndex).toBeLessThan(firstUsageIndex);
-		expect(firstUsageIndex).toBeLessThan(barIndex);
-		expect(barIndex).toBeLessThan(secondUsageIndex);
+		const rendered = ctx.chatContainer.render(120).join("\n");
+		expect(rendered.indexOf("src/foo.ts")).toBeLessThan(rendered.indexOf("src/bar.ts"));
+		expect(rendered).not.toContain(USAGE_LABEL);
+		expect(rendered).not.toContain(USAGE_TS_LABEL);
+		expect(rendered).toContain(SECOND_USAGE_TS_LABEL);
+		const footers = ctx.chatContainer.children.filter(isUsageRowBlock);
+		expect(footers).toHaveLength(2);
+		expect(footers.map(isUsageRowVisible)).toEqual([false, true]);
+	});
+
+	it("rebuilds hidden history with exactly one current activity row", () => {
+		const { ctx, helpers } = makeHarness(true);
+		ctx.chatContainer.setToolActivityVisible(false);
+		helpers.renderSessionContext({ messages: [...bashTurn(), ...readTurn()] } as SessionContext);
+		const footers = ctx.chatContainer.children.filter(isUsageRowBlock);
+		expect(footers).toHaveLength(2);
+		expect(footers[0]!.render(120)).toEqual([]);
+		const activity = footers.map(row => Bun.stripANSI(row.render(120).join("\n"))).join("\n");
+		expect(activity).not.toContain("1 command");
+		expect(activity.match(/1 read/g)).toHaveLength(1);
 	});
 
 	it("renders no usage row when showTokenUsage is off", () => {
@@ -135,8 +149,10 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 
 		const children = ctx.chatContainer.children;
 		expect(children.some(c => c.render(120).join("\n").includes(USAGE_LABEL))).toBe(false);
-		// Last block is the read group, not a usage row.
-		expect(children[children.length - 1]).toBeInstanceOf(ReadToolGroupComponent);
+		const group = children.find(child => child instanceof ReadToolGroupComponent)!;
+		const rendered = ctx.chatContainer.render(120).join("\n").trimEnd();
+		expect(rendered).toContain("src/foo.ts");
+		expect(rendered.endsWith(group.render(120).join("\n").trimEnd())).toBe(true);
 	});
 });
 
@@ -212,7 +228,7 @@ describe("ChatTranscriptBuilder token-usage row timestamp", () => {
 		expect(builder.rowForEntry("tool-entry")).toBe(0);
 	});
 
-	it("keeps grouped read metrics nested on the reusable transcript-builder path", () => {
+	it("keeps only the latest read metrics visible on the reusable transcript-builder path", () => {
 		const builder = new ChatTranscriptBuilder({
 			ui: { requestRender: () => {}, requestComponentRender: () => {} } as unknown as TUI,
 			cwd: process.cwd(),
@@ -233,11 +249,177 @@ describe("ChatTranscriptBuilder token-usage row timestamp", () => {
 			(component): component is ReadToolGroupComponent => component instanceof ReadToolGroupComponent,
 		);
 		expect(groups).toHaveLength(1);
-		const rendered = groups[0]!.render(120).join("\n");
-		expect(rendered).toContain(USAGE_TS_LABEL);
+		const footers = builder.container.children.filter(isUsageRowBlock);
+		expect(footers).toHaveLength(2);
+		expect(footers.map(isUsageRowVisible)).toEqual([false, true]);
+		const rendered = builder.container.render(120).join("\n");
+		expect(rendered).not.toContain(USAGE_TS_LABEL);
 		expect(rendered).toContain(SECOND_USAGE_TS_LABEL);
-		expect(
-			builder.container.children.filter(component => component.render(120).join("\n").includes(USAGE_LABEL)),
-		).toEqual([groups[0]!]);
+		expect(groups[0]!.render(120).join("\n")).not.toContain(USAGE_LABEL);
+	});
+});
+
+function bashTurn(): AgentMessage[] {
+	const [assistant, result] = readTurn();
+	return [
+		{
+			...assistant,
+			content: [{ type: "toolCall", id: "r1", name: "bash", arguments: { command: "echo ok" } }],
+		} as AgentMessage,
+		{ ...result, toolName: "bash", content: [{ type: "text", text: "ok" }] } as AgentMessage,
+	];
+}
+
+describe("UsageRowBlock demotion lifecycle", () => {
+	beforeAll(async () => {
+		await initTheme();
+	});
+	beforeEach(async () => {
+		await Settings.init({ inMemory: true, cwd: process.cwd() });
+		cfgDisplayShowTokenUsage.set(settings, true);
+	});
+	afterEach(() => {
+		resetSettingsForTest();
+	});
+
+	it("demoteLatestUsageRow is a no-op on an empty container", () => {
+		const container = new TranscriptContainer();
+		expect(() => demoteLatestUsageRow(container)).not.toThrow();
+		expect(container.children.filter(isUsageRowBlock)).toHaveLength(0);
+	});
+
+	it("demoteLatestUsageRow hides the whole footer after a tool call turn", () => {
+		const { ctx, helpers } = makeHarness(true);
+		ctx.chatContainer.setToolActivityVisible(false);
+		helpers.renderSessionContext({ messages: bashTurn() } as SessionContext);
+		const footer = ctx.chatContainer.children.at(-1)!;
+		expect(isUsageRowBlock(footer)).toBe(true);
+		expect(isUsageRowVisible(footer)).toBe(true);
+		const before = Bun.stripANSI(footer.render(120).join("\n"));
+		expect(before).toContain(USAGE_LABEL);
+		demoteLatestUsageRow(ctx.chatContainer);
+		expect(ctx.chatContainer.children.at(-1)).toBe(footer);
+		expect(isUsageRowVisible(footer)).toBe(false);
+		const after = Bun.stripANSI(footer.render(120).join("\n"));
+		expect(after).not.toContain(USAGE_LABEL);
+		expect(after).not.toContain("1 command");
+		expect(footer.render(120)).toEqual([]);
+	});
+
+	it("second turn start demotes the first turn's footer before appending", () => {
+		const { ctx, helpers } = makeHarness(true);
+		helpers.renderSessionContext({ messages: bashTurn() } as SessionContext);
+		const footer = ctx.chatContainer.children.at(-1)!;
+		expect(isUsageRowVisible(footer)).toBe(true);
+		helpers.addMessageToChat(readTurn()[0]!);
+		expect(ctx.chatContainer.children).toContain(footer);
+		expect(isUsageRowVisible(footer)).toBe(false);
+	});
+
+	it("showTokenUsage=false: only the latest hidden activity footer remains", () => {
+		const { ctx, helpers } = makeHarness(false);
+		ctx.chatContainer.setToolActivityVisible(false);
+		helpers.renderSessionContext({ messages: bashTurn() } as SessionContext);
+		const footer = ctx.chatContainer.children.at(-1)!;
+		expect(isUsageRowBlock(footer)).toBe(true);
+		expect(isUsageRowVisible(footer)).toBe(false);
+		const rendered = Bun.stripANSI(footer.render(120).join("\n"));
+		expect(rendered).not.toContain(USAGE_LABEL);
+		expect(rendered).toContain("1 command");
+		const nextTurn = readTurn();
+		helpers.addMessageToChat(nextTurn[0]!);
+		expect(footer.render(120)).toEqual([]);
+		helpers.renderSessionContext({ messages: [...bashTurn(), ...nextTurn] } as SessionContext);
+		expect(footer.render(120)).toEqual([]);
+		const current = ctx.chatContainer.children.filter(isUsageRowBlock).filter(row => row.render(120).length > 0);
+		expect(current).toHaveLength(1);
+		expect(Bun.stripANSI(current[0]!.render(120).join("\n"))).toContain("1 read");
+	});
+
+	it("rebuild then addMessageToChat demotes the replayed footer", () => {
+		const { ctx, helpers } = makeHarness(true);
+		helpers.renderSessionContext({ messages: readTurn() } as SessionContext);
+		const footer = ctx.chatContainer.children.at(-1)!;
+		expect(isUsageRowVisible(footer)).toBe(true);
+		helpers.addMessageToChat(bashTurn()[0]!);
+		expect(isUsageRowVisible(footer)).toBe(false);
+		expect(footer.render(120).join("\n")).not.toContain(USAGE_LABEL);
+	});
+});
+
+describe("transferLatestUsageRow", () => {
+	it("transfers the latest usage row from source to destination", () => {
+		const source = new TranscriptContainer();
+		const destination = new TranscriptContainer();
+		appendUsageRow(source, { usage: (readTurn()[0] as AssistantMessage).usage });
+		const footer = source.children.at(-1)!;
+		expect(isUsageRowVisible(footer)).toBe(true);
+		// Rebuild moves the staged children before transferring their latest-row ownership.
+		source.removeChild(footer);
+		destination.addChild(footer);
+		transferLatestUsageRow(source, destination);
+		expect(source.children).not.toContain(footer);
+		expect(destination.children).toContain(footer);
+		demoteLatestUsageRow(source);
+		expect(isUsageRowVisible(footer)).toBe(true);
+		demoteLatestUsageRow(destination);
+		expect(isUsageRowVisible(footer)).toBe(false);
+	});
+
+	it("preserves an existing destination footer if it's later than the transferred row", () => {
+		const source = new TranscriptContainer();
+		const destination = new TranscriptContainer();
+		const usage = (readTurn()[0] as AssistantMessage).usage;
+		appendUsageRow(destination, { usage });
+		const existing = destination.children.at(-1)!;
+		appendUsageRow(source, { usage });
+		const staged = source.children.at(-1)!;
+		source.removeChild(staged);
+		destination.removeChild(existing);
+		destination.addChild(staged);
+		destination.addChild(existing);
+		transferLatestUsageRow(source, destination);
+		expect(destination.children).toEqual([staged, existing]);
+		expect(isUsageRowVisible(staged)).toBe(false);
+		expect(isUsageRowVisible(existing)).toBe(true);
+		demoteLatestUsageRow(destination);
+		expect(isUsageRowVisible(existing)).toBe(false);
+	});
+});
+
+describe("preserveExistingChat footer ownership", () => {
+	beforeEach(async () => {
+		await Settings.init({ inMemory: true, cwd: process.cwd() });
+		cfgDisplayShowTokenUsage.set(settings, true);
+	});
+	afterEach(() => {
+		resetSettingsForTest();
+	});
+
+	it("keeps the preserved later footer latest after staged replay", async () => {
+		const messages = readTurn();
+		const context = { messages } as SessionContext;
+		const ctx = createInteractiveModeContext({
+			settings: Settings.isolated({ "display.showTokenUsage": true }),
+			session: { isStreaming: true, buildTranscriptSessionContext: () => context },
+			hideToolActivity: true,
+		});
+		const helpers = new UiHelpers(ctx);
+		ctx.addMessageToChat = helpers.addMessageToChat.bind(helpers);
+		ctx.renderSessionContext = helpers.renderSessionContext.bind(helpers);
+		ctx.chatContainer.setToolActivityVisible(false);
+		appendUsageRow(ctx.chatContainer, {
+			activity: "preserved activity",
+			usage: (messages[0] as AssistantMessage).usage,
+		});
+		const preserved = ctx.chatContainer.children.at(-1)!;
+		await helpers.renderInitialMessages({ preserveExistingChat: true });
+		const footers = ctx.chatContainer.children.filter(isUsageRowBlock);
+		expect(footers).toHaveLength(2);
+		expect(footers.at(-1)).toBe(preserved);
+		expect(footers.map(isUsageRowVisible)).toEqual([false, true]);
+		demoteLatestUsageRow(ctx.chatContainer);
+		expect(isUsageRowVisible(preserved)).toBe(false);
+		expect(preserved.render(120)).toEqual([]);
 	});
 });

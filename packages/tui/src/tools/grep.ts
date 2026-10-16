@@ -271,6 +271,7 @@ function grepStatusIcon(uiTheme: Theme): string {
 
 /** Render grep calls and results in the transcript. */
 export const grepToolRenderer = {
+	activityTally: () => ({ kind: "search" as const }),
 	inline: true,
 	renderCall(args: GrepRenderArgs, _options: RenderResultOptions, uiTheme: Theme): Component {
 		const paths = toPathList(args.path ?? args.paths);

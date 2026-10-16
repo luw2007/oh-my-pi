@@ -202,6 +202,7 @@ function quoteQuery(query: string | undefined): string | undefined {
 
 /** Render find calls and results in the transcript. */
 export const findToolRenderer = {
+	activityTally: () => ({ kind: "search" as const }),
 	renderCall(args: FindRenderArgs, options: RenderResultOptions, uiTheme: Theme): Component {
 		const keywords = args.grep_keywords ?? [];
 		const meta = keywords.length > 0 ? [keywords.join(" ")] : [];

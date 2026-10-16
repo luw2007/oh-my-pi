@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Hidden tool activity shows one categorized activity row for the latest completed assistant request, even with token usage off. Both activity and usage disappear when the next request starts.
+
 ### Fixed
 
+- Transcript replay retains completed billed wait history when earlier request metrics are demoted.
 - Mermaid diagrams now use compact spacing, tighten further on narrow terminals, collapse after 12 rows with the shared expand shortcut, and remove empty renderer canvas edges ([#11124](https://github.com/can1357/oh-my-pi/issues/11124)).
 - Magpie response usage rows now show the canonical model returned by the gateway, including its reported effort, in live and replayed transcripts instead of the requested routing group.
 ### Added
