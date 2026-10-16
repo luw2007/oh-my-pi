@@ -138,7 +138,7 @@ async function buildBinary(target: BinaryTarget): Promise<void> {
 		transformersVersion,
 		native: target,
 		target: target.target,
-		minifyIdentifiers: true,
+		buildTag: Bun.env.PI_BUILD_TAG || undefined,
 		skipBuiltinCodesign: shouldAdhocSignDarwinBinary(target),
 	});
 	// Bun 1.3.12 emits a truncated Mach-O signature on darwin builds.
