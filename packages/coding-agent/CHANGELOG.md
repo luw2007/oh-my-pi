@@ -10,6 +10,7 @@
 ### Added
 
 - Extensions can observe and answer the interactive plan review, including refinement feedback and save-and-quit ([#14250](https://github.com/can1357/oh-my-pi/pull/14250) by [@rlfleming93](https://github.com/rlfleming93))
+- Local binary builds can compile omp ahead of time with a [Pi-Bolt](https://github.com/opensec-git/Pi-Bolt) runtime (`OMP_AOT_RUNTIME=<pi-bolt bun> bun run build`), cutting interactive startup time by about 35% and startup CPU by about 55% on Linux x64, at about 2.4× the binary size
 
 ### Changed
 

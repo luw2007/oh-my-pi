@@ -1071,6 +1071,32 @@ describe("OutputSink maxColumns (per-line cap)", () => {
 		expect(dumped.columnTruncatedRange).toBeUndefined();
 	});
 
+	test("tracks the exact retained byte count for capped mixed-UTF-8 lines", async () => {
+		const sink = new OutputSink({ maxColumns: 8, spillThreshold: 1000 });
+		const input = "ab界abcdef\nééééé";
+		await sink.push(input);
+
+		const dumped = await sink.dump();
+		expect(dumped.output).toBe("ab界…\néé…");
+		expect(dumped.outputBytes).toBe(Buffer.byteLength(dumped.output, "utf-8"));
+		expect(dumped.totalBytes).toBe(Buffer.byteLength(input, "utf-8"));
+		expect(dumped.columnDroppedBytes).toBe(12);
+		expect(dumped.columnTruncatedLines).toBe(2);
+	});
+
+	test("uses byte widths from earlier Unicode chunks when a following ASCII chunk reaches the cap", async () => {
+		const sink = new OutputSink({ maxColumns: 8, spillThreshold: 1000 });
+		sink.push("界");
+		sink.push("abcde"); // 3 + 5 UTF-8 bytes: exactly at the cap.
+		expect(sink.preview()).toBe("界abcde");
+		sink.push("f\nnext");
+		const dumped = await sink.dump();
+		expect(dumped.output).toBe("界abcde…\nnext");
+		expect(dumped.outputBytes).toBe(Buffer.byteLength(dumped.output, "utf-8"));
+		expect(dumped.columnTruncatedLines).toBe(1);
+		expect(dumped.columnDroppedBytes).toBe(1);
+	});
+
 	test("multibyte line: cap counts UTF-8 bytes and the notice says bytes", async () => {
 		// Regression for #10888: a 385-char line is 770 UTF-8 bytes. A char cap of
 		// 768 would leave it untouched; the sink enforces bytes, so it trims. The
