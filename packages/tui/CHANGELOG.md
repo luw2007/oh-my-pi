@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced CPU use when capturing long ASCII command output with per-line limits enabled.
+
 ### Fixed
 
 - Mermaid diagrams now use compact spacing, tighten further on narrow terminals, collapse after 12 rows with the shared expand shortcut, and remove empty renderer canvas edges ([#11124](https://github.com/can1357/oh-my-pi/issues/11124)).

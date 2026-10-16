@@ -1064,11 +1064,16 @@ export class OutputSink {
 		}
 
 		const inlineBytes = substituted ? Buffer.byteLength(inlineChunk, "utf-8") : rawBytes;
-		// Per-line column cap. State persists across chunks so a mid-line split
-		// still respects the budget. Operates on the inline chunk; the complete
-		// chunk is mirrored to the artifact before any cap is applied.
-		const capped = this.#maxColumns > 0 ? this.#applyColumnCap(inlineChunk, firstLine) : inlineChunk;
-		const cappedBytes = capped === inlineChunk ? inlineBytes : Buffer.byteLength(capped, "utf-8");
+		// Byte accounting already tells us whether the sanitized chunk is ASCII.
+		// Reuse that fact for exact line-width checks without encoding each line.
+		const droppedBefore = this.#columnDroppedBytes;
+		const cutLinesBefore = this.#columnTruncatedLines;
+		const capped =
+			this.#maxColumns > 0
+				? this.#applyColumnCap(inlineChunk, firstLine, inlineBytes === inlineChunk.length)
+				: inlineChunk;
+		const cappedBytes =
+			inlineBytes - (this.#columnDroppedBytes - droppedBefore) + 3 * (this.#columnTruncatedLines - cutLinesBefore);
 		const cappedThisChunk = cappedBytes < inlineBytes;
 		if (substituted) this.#truncated = true;
 
@@ -1111,13 +1116,13 @@ export class OutputSink {
 
 	/**
 	 * Apply the per-line byte cap to `chunk`, dropping bytes that would push the
-	 * current line beyond `#maxColumns`. Emits a single `…` once a line trips the
-	 * cap; subsequent bytes are skipped until the next `\n`. State persists
-	 * across calls so a long line split across chunks still produces one marker.
+	 * current line beyond `#maxColumns`. State persists across calls so a long
+	 * line split across chunks still produces one marker.
+	 * Known ASCII chunks use code-unit lengths as exact UTF-8 byte lengths.
 	 */
-	#applyColumnCap(chunk: string, firstLine: number): string {
+	#applyColumnCap(chunk: string, firstLine: number, ascii: boolean): string {
 		if (chunk.length === 0) return chunk;
-		if (!this.#columnEllipsisAdded && this.#fitsColumnCap(chunk)) return chunk;
+		if (!this.#columnEllipsisAdded && this.#fitsColumnCap(chunk, ascii)) return chunk;
 		const max = this.#maxColumns;
 		const parts: string[] = [];
 		let cursor = 0;
@@ -1129,9 +1134,9 @@ export class OutputSink {
 				const segment = chunk.substring(cursor, segEnd);
 				if (this.#columnEllipsisAdded) {
 					// Past the cap; drop until newline.
-					this.#columnDroppedBytes += Buffer.byteLength(segment, "utf-8");
+					this.#columnDroppedBytes += ascii ? segment.length : Buffer.byteLength(segment, "utf-8");
 				} else {
-					const segBytes = Buffer.byteLength(segment, "utf-8");
+					const segBytes = ascii ? segment.length : Buffer.byteLength(segment, "utf-8");
 					const remaining = max - this.#currentLineBytes;
 					if (segBytes <= remaining) {
 						parts.push(segment);
@@ -1174,27 +1179,32 @@ export class OutputSink {
 	}
 
 	/**
-	 * Fast path for {@link #applyColumnCap}: when every line segment fits the
-	 * remaining cap even at the 3-bytes-per-code-unit UTF-8 worst case, the
-	 * chunk passes through unchanged and only the trailing line width is
-	 * measured. Returns false (state untouched) when any line might trip the cap.
+	 * Fast path for {@link #applyColumnCap}: known ASCII has an exact byte width;
+	 * other chunks use the 3-bytes-per-code-unit UTF-8 worst case. When every
+	 * line fits, pass through unchanged and only measure the trailing line.
+	 * Returns false (state untouched) when any line might trip the cap.
 	 */
-	#fitsColumnCap(chunk: string): boolean {
+	#fitsColumnCap(chunk: string, ascii: boolean): boolean {
 		const max = this.#maxColumns;
 		let room = max - this.#currentLineBytes;
+		const bytesPerUnit = ascii ? 1 : 3;
 		let cursor = 0;
 		for (;;) {
 			const nlIdx = chunk.indexOf(NL, cursor);
 			const segEnd = nlIdx === -1 ? chunk.length : nlIdx;
-			if ((segEnd - cursor) * 3 > room) return false;
+			if ((segEnd - cursor) * bytesPerUnit > room) return false;
 			if (nlIdx === -1) break;
 			cursor = nlIdx + 1;
 			room = max;
 		}
 		if (cursor === 0) {
-			this.#currentLineBytes += Buffer.byteLength(chunk, "utf-8");
+			this.#currentLineBytes += ascii ? chunk.length : Buffer.byteLength(chunk, "utf-8");
 		} else {
-			this.#currentLineBytes = cursor === chunk.length ? 0 : Buffer.byteLength(chunk.substring(cursor), "utf-8");
+			this.#currentLineBytes = ascii
+				? chunk.length - cursor
+				: cursor === chunk.length
+					? 0
+					: Buffer.byteLength(chunk.substring(cursor), "utf-8");
 		}
 		return true;
 	}
