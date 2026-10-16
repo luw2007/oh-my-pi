@@ -1,7 +1,7 @@
 import type { AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { formatCount } from "@oh-my-pi/pi-utils";
-import { type RequestFooterInput, formatUsageModel } from "../overlays/usage-row";
+import { type RequestFooterInput, formatUsageModel, type TurnUsageSummary } from "../overlays/usage-row";
 import { TOOL_ACTIVITY_KINDS, type ToolActivityKind, toolRenderers } from "../tools/index";
 import { toolRenderName } from "./tool-execution";
 import { assistantUsageIsBilled } from "./transcript-render-helpers";
@@ -72,13 +72,14 @@ export function requestFooterInput(
 	options: {
 		showUsage: boolean;
 		turnElapsedMs?: number;
+		turnUsage?: TurnUsageSummary;
 		omitActivity?: boolean;
 		turnActivity: TurnActivityTally;
 	},
 ): RequestFooterInput | undefined {
 	const { activity, continuesTurn, activityTurnId } = options.turnActivity.add(message, lookup, options.omitActivity);
 	const usage = options.showUsage && assistantUsageIsBilled(message.usage) ? message.usage : undefined;
-	if (!activity && !usage) return undefined;
+	if (!activity && !usage && !options.turnUsage) return undefined;
 	return {
 		activity,
 		continuesTurn,
@@ -88,6 +89,7 @@ export function requestFooterInput(
 		ttftMs: message.ttft,
 		timestamp: message.timestamp,
 		turnElapsedMs: options.turnElapsedMs,
+		turnUsage: options.turnUsage,
 		model: formatUsageModel(message.provider, message.model, message.reasoningEffort, message.upstreamModel),
 	};
 }

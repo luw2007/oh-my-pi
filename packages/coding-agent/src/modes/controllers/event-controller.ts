@@ -77,6 +77,7 @@ import { streamingStringKeysForTool, ToolArgsRevealController } from "./tool-arg
 import {
 	cfgCompletionNotify,
 	cfgDisplayCacheMissMarker,
+	cfgDisplayMergePerTurnTokenUsage,
 	cfgDisplayShowTokenUsage,
 	cfgDisplayShowTurnTime,
 	cfgDisplaySmoothStreaming,
@@ -1833,6 +1834,8 @@ export class EventController {
 			this.#lastAssistantComponent = lastPostToolAssistantComponent ?? this.ctx.streamingComponent;
 			const turnUsage = this.#turnUsage.add(event.message, this.#turnStartedAt);
 			if (turnUsage) this.#lastAssistantComponent.setTurnUsage(turnUsage);
+			const mergePerTurnUsage =
+				cfgDisplayShowTokenUsage.get(settings) && cfgDisplayMergePerTurnTokenUsage.get(settings);
 			const readCallIds = groupedReadCallIds(event.message);
 			if (!readCallIds || !readCallIds.every(id => this.#lastReadGroup?.hasEntry(id))) {
 				this.#resetReadGroup();
@@ -1844,10 +1847,11 @@ export class EventController {
 					isBuiltInTool: name => this.ctx.viewSession.hasBuiltInTool(name),
 				},
 				{
-					showUsage: cfgDisplayShowTokenUsage.get(settings),
+					showUsage: cfgDisplayShowTokenUsage.get(settings) && !mergePerTurnUsage,
 					turnElapsedMs: cfgDisplayShowTurnTime.get(settings)
 						? turnElapsedMs(this.#turnStartedAt, event.message)
 						: undefined,
+					turnUsage: mergePerTurnUsage ? turnUsage : undefined,
 					omitActivity: event.message.stopReason === "aborted" && this.ctx.viewSession.isTtsrAbortPending,
 					turnActivity: this.#turnActivity,
 				},

@@ -669,6 +669,19 @@ export const cfgDisplayShowTokenUsage = register({
 	},
 });
 
+/** Merge completed logical-turn token totals into the compact tool-activity footer. */
+export const cfgDisplayMergePerTurnTokenUsage = register({
+	id: "display.mergePerTurnTokenUsage",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "appearance",
+		group: "Display",
+		label: "Merge Per-Turn Token Usage",
+		description: "When Show Token Usage is enabled, show one combined token total for each completed tool-use turn",
+	},
+});
+
 export const cfgDisplayShowTurnTime = register({
 	id: "display.showTurnTime",
 	type: "boolean",
@@ -699,6 +712,7 @@ effect(
 		showImages: cfgTerminalShowImages,
 		cacheMissMarker: cfgDisplayCacheMissMarker,
 		showTokenUsage: cfgDisplayShowTokenUsage,
+		mergePerTurnTokenUsage: cfgDisplayMergePerTurnTokenUsage,
 		showTurnTime: cfgDisplayShowTurnTime,
 	}),
 	setChatTranscriptDisplayPreferences,

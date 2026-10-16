@@ -57,6 +57,7 @@ import {
 	type RequestFooterInput,
 	transferLatestUsageRow,
 	turnElapsedMs,
+	TurnUsageTally,
 } from "@oh-my-pi/pi-tui/overlays/usage-row";
 import { UserMessageComponent } from "@oh-my-pi/pi-tui/chat/user-message";
 import { decodeStreamedToolArgs, streamingStringKeysForTool } from "../../modes/controllers/tool-args-reveal";
@@ -107,6 +108,7 @@ import {
 	cfgComposerRecallClearedDrafts,
 	cfgDisplayCacheMissMarker,
 	cfgDisplayCollapseCompacted,
+	cfgDisplayMergePerTurnTokenUsage,
 	cfgDisplayShowTokenUsage,
 	cfgDisplayShowTurnTime,
 	cfgTerminalShowImages,
@@ -503,6 +505,7 @@ export class UiHelpers {
 		let pendingReadCallIds: string[] | undefined;
 		let pendingRequest = false;
 		let turnStartedAt: number | undefined;
+		const turnUsage = new TurnUsageTally();
 		const turnActivity = new TurnActivityTally();
 		const flushPendingUsage = () => {
 			if (!pendingRequest) return;
@@ -593,6 +596,7 @@ export class UiHelpers {
 					}
 					assistantComponent.setServedModelMismatch(this.ctx.servedModelTracker.check(message));
 				}
+				let lastAssistantComponent = assistantComponent;
 				const hasVisibleAssistantContent = assistantHasVisibleContent(message);
 				if (hasVisibleAssistantContent) {
 					// Rebuild reconstructs immutable history; seal (not finalize) because
@@ -604,13 +608,14 @@ export class UiHelpers {
 				const hasErrorStop = errorPresentation.kind === "full";
 				const errorMessage = hasErrorStop ? errorPresentation.text : null;
 				const appendAssistantSegment = (segment: AssistantMessage | undefined) => {
-					if (!segment || !assistantHasVisibleContent(segment)) return;
+					if (!segment || !assistantHasVisibleContent(segment)) return undefined;
 					const component = createAssistantMessageComponent(
 						this.ctx,
 						segment,
 						getAssistantMessageLinkTargets(this.ctx),
 					);
 					this.ctx.chatContainer.addChild(component);
+					return component;
 				};
 
 				// Render tool call components
@@ -620,7 +625,7 @@ export class UiHelpers {
 					}
 					const afterToolSegment = timeline.afterToolCalls.get(content.id);
 					if (options.preservedLiveToolCallIds?.has(content.id)) {
-						appendAssistantSegment(afterToolSegment);
+						lastAssistantComponent = appendAssistantSegment(afterToolSegment) ?? lastAssistantComponent;
 						continue;
 					}
 					const tool = this.ctx.viewSession.getToolByName(content.name);
@@ -665,7 +670,7 @@ export class UiHelpers {
 								readToolCallAssistantComponents.set(content.id, assistantComponent);
 							}
 						}
-						appendAssistantSegment(afterToolSegment);
+						lastAssistantComponent = appendAssistantSegment(afterToolSegment) ?? lastAssistantComponent;
 						continue;
 					}
 
@@ -709,7 +714,7 @@ export class UiHelpers {
 					} else {
 						this.ctx.pendingTools.set(content.id, component);
 					}
-					appendAssistantSegment(afterToolSegment);
+					lastAssistantComponent = appendAssistantSegment(afterToolSegment) ?? lastAssistantComponent;
 				}
 				// Dangling toolCalls (no result on the resolved path — failed or
 				// retried turns, results on sibling branches) were stripped by the
@@ -722,6 +727,11 @@ export class UiHelpers {
 						new StrippedToolCallsPlaceholder(strippedToolCalls, !this.ctx.hideToolActivity),
 					);
 				}
+				const completedTurnUsage = turnUsage.add(message, turnStartedAt);
+				if (completedTurnUsage && lastAssistantComponent) lastAssistantComponent.setTurnUsage(completedTurnUsage);
+				const mergePerTurnUsage =
+					cfgDisplayShowTokenUsage.get(this.ctx.settings) &&
+					cfgDisplayMergePerTurnTokenUsage.get(this.ctx.settings);
 				pendingFooter = requestFooterInput(
 					message,
 					{
@@ -729,10 +739,11 @@ export class UiHelpers {
 						isBuiltInTool: name => this.ctx.viewSession.hasBuiltInTool(name),
 					},
 					{
-						showUsage: cfgDisplayShowTokenUsage.get(this.ctx.settings),
+						showUsage: cfgDisplayShowTokenUsage.get(this.ctx.settings) && !mergePerTurnUsage,
 						turnElapsedMs: cfgDisplayShowTurnTime.get(this.ctx.settings)
 							? turnElapsedMs(turnStartedAt, message)
 							: undefined,
+						turnUsage: mergePerTurnUsage ? completedTurnUsage : undefined,
 						turnActivity,
 					},
 				);
@@ -848,6 +859,7 @@ export class UiHelpers {
 				// agent-attributed `user` message (advisor tool-loop redirect) must not.
 				if (message.role === "user" && message.attribution !== "agent") {
 					turnStartedAt = message.timestamp;
+					turnUsage.reset();
 					turnActivity.reset();
 				}
 				// A synthetic developer message initiates a fresh run (auto-continue,
@@ -860,10 +872,12 @@ export class UiHelpers {
 					// turn's own prompt: anchor the delta to it instead of clearing.
 					if (message.userInitiated) turnStartedAt = message.timestamp;
 					else turnStartedAt = undefined;
+					turnUsage.reset();
 					turnActivity.reset();
 				}
 				if (message.role === "custom" && isUserTurnInitiator(message as CustomMessage)) {
 					turnStartedAt = message.timestamp;
+					turnUsage.reset();
 					turnActivity.reset();
 				}
 				// All other messages use standard rendering

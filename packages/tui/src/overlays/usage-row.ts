@@ -25,6 +25,8 @@ export interface RequestFooterInput {
 	timestamp?: number;
 	turnElapsedMs?: number;
 	model?: string;
+	/** Completed logical-turn total used instead of the individual request usage. */
+	turnUsage?: TurnUsageSummary;
 }
 
 /** Below this the rate is nonsense (cached/instant responses yield absurd tok/s). */
@@ -215,7 +217,7 @@ class UsageRowBlock extends Container {
 	}
 
 	get showsUsage(): boolean {
-		return this.#latest && this.#input.usage !== undefined;
+		return this.#latest && (this.#input.usage !== undefined || this.#input.turnUsage !== undefined);
 	}
 
 	get activityTurnId(): string | undefined {
@@ -248,30 +250,36 @@ class UsageRowBlock extends Container {
 	#refresh(): void {
 		this.#nativeNode = undefined;
 		this.clear();
-		const input = this.#input;
 		const activity = this.#activityText;
+		const turnUsage = this.#input.turnUsage;
 		if (activity || this.showsUsage) this.addChild(new Spacer(1));
-		if (activity) this.addChild(new Text(theme.fg("dim", activity), 1, 0));
-		if (this.showsUsage && input.usage) {
+		if (turnUsage) {
 			this.addChild(
-				new MetricRow(
-					usageRowSpecs(
-						input.usage,
-						input.durationMs,
-						input.ttftMs,
-						input.timestamp,
-						input.turnElapsedMs,
-						input.model,
-					),
-					{
-						separator: "  ",
-						overflow: "wrap",
-						paddingX: 1,
-						paddingY: 0,
-						style: value => theme.fg("dim", value),
-					},
-				),
+				new Text(theme.fg("dim", [activity, formatTurnUsage(turnUsage).text].filter(Boolean).join("  ")), 1, 0),
 			);
+		} else {
+			if (activity) this.addChild(new Text(theme.fg("dim", activity), 1, 0));
+			if (this.showsUsage) {
+				this.addChild(
+					new MetricRow(
+						usageRowSpecs(
+							this.#input.usage!,
+							this.#input.durationMs,
+							this.#input.ttftMs,
+							this.#input.timestamp,
+							this.#input.turnElapsedMs,
+							this.#input.model,
+						),
+						{
+							separator: "  ",
+							overflow: "wrap",
+							paddingX: 1,
+							paddingY: 0,
+							style: value => theme.fg("dim", value),
+						},
+					),
+				);
+			}
 		}
 		this.invalidate();
 	}
@@ -287,10 +295,23 @@ class UsageRowBlock extends Container {
 		if (this.#nativeNode && this.#nativeHour12 === hour12) return this.#nativeNode;
 		this.#nativeHour12 = hour12;
 		const children: NativeChild[] = [];
-		if (this.#activityText) {
-			children.push(keyed(text([span(this.#activityText, "dim")]), "activity"));
+		if (this.#input.turnUsage) {
+			const usage = formatTurnUsage(this.#input.turnUsage);
+			children.push(
+				keyed(
+					row([text([span([this.#activityText, usage.text].filter(Boolean).join("  "), "dim")])], {
+						role: "omp.usage.turn",
+						gap: "none",
+						align: "baseline",
+						title: usage.title,
+					}),
+					"usage",
+				),
+			);
+		} else {
+			if (this.#activityText) children.push(keyed(text([span(this.#activityText, "dim")]), "activity"));
+			if (this.showsUsage) children.push(keyed(this.#describeUsage(hour12), "usage"));
 		}
-		if (this.showsUsage) children.push(keyed(this.#describeUsage(hour12), "usage"));
 		this.#nativeNode = withHidden(col(children), children.length === 0);
 		return this.#nativeNode;
 	}

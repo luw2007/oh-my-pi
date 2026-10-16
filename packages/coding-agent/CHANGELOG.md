@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the opt-in Pi-Bolt AOT binary build; standalone builds continue to use Bun bytecode.
+
 ### Fixed
 
 - Rebuilt activity footers preserve later existing usage-row ownership and retain completed billed wait history.

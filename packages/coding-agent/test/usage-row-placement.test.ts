@@ -12,6 +12,7 @@ import {
 	chatTranscriptDisplayPreferences,
 	setChatTranscriptDisplayPreferences,
 } from "@oh-my-pi/pi-tui/chat/display-preferences";
+import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import { ReadToolGroupComponent } from "@oh-my-pi/pi-tui/chat/read-tool-group";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
@@ -30,7 +31,7 @@ import { formatNumber } from "@oh-my-pi/pi-utils";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal";
 import { createInteractiveModeContext } from "./helpers/interactive-mode-context";
 
-import { cfgDisplayShowTokenUsage } from "@oh-my-pi/pi-coding-agent/modes/settings";
+import { cfgDisplayMergePerTurnTokenUsage, cfgDisplayShowTokenUsage } from "@oh-my-pi/pi-coding-agent/modes/settings";
 
 // 4242 → "4.2K": distinctive enough not to collide with a read group's render.
 const USAGE_INPUT = 4242;
@@ -158,6 +159,7 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 
 	it("renders no usage row when showTokenUsage is off", () => {
 		const { ctx, helpers } = makeHarness(false);
+		cfgDisplayMergePerTurnTokenUsage.set(ctx.settings, true);
 		helpers.renderSessionContext({ messages: readTurn() } as SessionContext);
 
 		const children = ctx.chatContainer.children;
@@ -167,8 +169,82 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 		expect(rendered).toContain("src/foo.ts");
 		expect(rendered.endsWith(group.render(120).join("\n").trimEnd())).toBe(true);
 	});
+
+	it("merges a tool-use turn into its completed token total only when both display settings are enabled", () => {
+		const { ctx, helpers } = makeHarness(true);
+		cfgDisplayMergePerTurnTokenUsage.set(ctx.settings, true);
+		const toolUse = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "src/foo.ts" } }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			stopReason: "toolUse",
+			usage: {
+				input: USAGE_INPUT,
+				output: 7,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: USAGE_INPUT + 7,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			timestamp: USAGE_TS,
+		};
+		const complete = {
+			...toolUse,
+			content: [{ type: "text", text: "done" }],
+			stopReason: "stop",
+			usage: { ...toolUse.usage, input: 100, totalTokens: 107 },
+			completedAt: USAGE_TS + 1_000,
+		} as unknown as AgentMessage;
+		helpers.renderSessionContext({
+			messages: [{ role: "user", content: "inspect", timestamp: USAGE_TS - 1_000 }, toolUse, complete],
+		} as SessionContext);
+
+		const rendered = Bun.stripANSI(ctx.chatContainer.render(120).join("\n"));
+		expect(rendered).toContain("4.4K tok this turn");
+		expect(rendered).not.toContain(USAGE_TS_LABEL);
+	});
 });
 
+describe("UiHelpers.renderSessionContext native turn usage", () => {
+	beforeAll(async () => {
+		await initTheme();
+	});
+
+	it("attaches a completed subagent turn total to its final answer", () => {
+		const { ctx, helpers } = makeHarness(true);
+		const messages = [
+			{ role: "user", content: "inspect", timestamp: 1_000 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "done" }],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				stopReason: "stop",
+				usage: {
+					input: USAGE_INPUT,
+					output: 7,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: USAGE_INPUT + 7,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				timestamp: 2_000,
+				completedAt: 3_000,
+			} as unknown as AgentMessage,
+		];
+		helpers.renderSessionContext({ messages } as SessionContext);
+
+		const assistant = ctx.chatContainer.children.find(
+			(component): component is AssistantMessageComponent => component instanceof AssistantMessageComponent,
+		);
+		expect(
+			assistant?.describe({} as never).c?.some(child => "p" in child && child.p?.role === "omp.turn.usage"),
+		).toBe(true);
+	});
+});
 describe("ChatTranscriptBuilder token-usage row timestamp", () => {
 	beforeEach(async () => {
 		await Settings.init({ inMemory: true, cwd: process.cwd() });
