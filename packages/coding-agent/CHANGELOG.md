@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Rebuilt activity footers retire both activity and usage when the next assistant message starts, preserve later existing footer ownership, and retain completed billed wait history.
+- Rebuilt activity footers preserve later existing usage-row ownership and retain completed billed wait history.
 - Managed skills created or updated by `learn` and `manage_skill` now disable automatic model invocation while remaining explicitly accessible; authored skills are unchanged.
 - Live and restored Magpie response stats display the gateway's actual served model instead of its requested group route, without appending a requested effort that the router may not have used.
 ### Added
@@ -14,7 +14,7 @@
 
 ### Changed
 
-- Hidden tool activity shows one categorized activity row for the latest completed assistant request, even with token usage off; both activity and usage disappear when the next request starts.
+- Hidden tool activity aggregates all tool calls within each turn into one categorized summary and preserves earlier turns' summaries, even with token usage off; token usage remains latest-request-only.
 - Tool approval prompts now replace the composer like `ask`, show one row per detail, and approve with `Ctrl+Enter` (or `Ctrl+Q`) instead of `Enter` ([#15548](https://github.com/can1357/oh-my-pi/pull/15548) by [@H4vC](https://github.com/H4vC))
 
 ### Fixed

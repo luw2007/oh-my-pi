@@ -13,7 +13,12 @@ import { col, keyed, withHidden } from "../native/describe";
 import type { TranscriptContainer } from "../chrome/transcript-container";
 
 export interface RequestFooterInput {
+	/** Running tool-call summary of the logical turn up to this request. */
 	activity?: string;
+	/** An earlier request of the same turn already carried a (now partial) summary. */
+	continuesTurn?: boolean;
+	/** First finalized tool call id of the logical turn, stable across replay and live rendering. */
+	activityTurnId?: string;
 	usage?: Usage;
 	durationMs?: number;
 	ttftMs?: number;
@@ -195,6 +200,7 @@ class UsageRowBlock extends Container {
 	readonly #input: RequestFooterInput;
 	#latest = true;
 	#toolActivityVisible = true;
+	#activitySuperseded = false;
 	#nativeNode: NativeNode | undefined;
 	#nativeHour12: boolean | undefined;
 
@@ -212,10 +218,25 @@ class UsageRowBlock extends Container {
 		return this.#latest && this.#input.usage !== undefined;
 	}
 
+	get activityTurnId(): string | undefined {
+		return this.#input.activityTurnId;
+	}
+
 	demote(): void {
 		if (!this.#latest) return;
 		this.#latest = false;
 		this.#refresh();
+	}
+
+	/** A later request of the same turn carries the running total; drop this partial one. */
+	supersedeActivity(): void {
+		if (this.#activitySuperseded) return;
+		this.#activitySuperseded = true;
+		this.#refresh();
+	}
+
+	get #activityText(): string | undefined {
+		return !this.#toolActivityVisible && !this.#activitySuperseded ? this.#input.activity : undefined;
 	}
 
 	setToolActivityVisible(visible: boolean): void {
@@ -228,7 +249,7 @@ class UsageRowBlock extends Container {
 		this.#nativeNode = undefined;
 		this.clear();
 		const input = this.#input;
-		const activity = this.#latest && !this.#toolActivityVisible ? input.activity : undefined;
+		const activity = this.#activityText;
 		if (activity || this.showsUsage) this.addChild(new Spacer(1));
 		if (activity) this.addChild(new Text(theme.fg("dim", activity), 1, 0));
 		if (this.showsUsage && input.usage) {
@@ -266,8 +287,8 @@ class UsageRowBlock extends Container {
 		if (this.#nativeNode && this.#nativeHour12 === hour12) return this.#nativeNode;
 		this.#nativeHour12 = hour12;
 		const children: NativeChild[] = [];
-		if (this.#latest && !this.#toolActivityVisible && this.#input.activity) {
-			children.push(keyed(text([span(this.#input.activity, "dim")]), "activity"));
+		if (this.#activityText) {
+			children.push(keyed(text([span(this.#activityText, "dim")]), "activity"));
 		}
 		if (this.showsUsage) children.push(keyed(this.#describeUsage(hour12), "usage"));
 		this.#nativeNode = withHidden(col(children), children.length === 0);
@@ -359,6 +380,8 @@ export function createUsageRowBlock(
 }
 
 const latestUsageRows = new WeakMap<TranscriptContainer, UsageRowBlock>();
+/** The newest block carrying a turn summary: kept after demotion, hidden once its turn continues. */
+const latestActivityRows = new WeakMap<TranscriptContainer, UsageRowBlock>();
 
 export function demoteLatestUsageRow(container: TranscriptContainer): void {
 	latestUsageRows.get(container)?.demote();
@@ -368,6 +391,24 @@ export function demoteLatestUsageRow(container: TranscriptContainer): void {
 /** Rebuilds stage components off-screen before moving them to the live transcript. */
 export function transferLatestUsageRow(from: TranscriptContainer, to: TranscriptContainer): void {
 	if (from === to) return;
+	const stagedActivity = latestActivityRows.get(from);
+	const existingActivity = latestActivityRows.get(to);
+	latestActivityRows.delete(from);
+	const stagedActivityIndex = stagedActivity ? to.children.indexOf(stagedActivity) : -1;
+	const existingActivityIndex = existingActivity ? to.children.indexOf(existingActivity) : -1;
+	if (stagedActivity && stagedActivityIndex >= 0) {
+		if (
+			existingActivity &&
+			existingActivityIndex >= 0 &&
+			stagedActivityIndex !== existingActivityIndex &&
+			stagedActivity.activityTurnId !== undefined &&
+			stagedActivity.activityTurnId === existingActivity.activityTurnId
+		) {
+			const older = stagedActivityIndex < existingActivityIndex ? stagedActivity : existingActivity;
+			older.supersedeActivity();
+		}
+		if (existingActivityIndex <= stagedActivityIndex) latestActivityRows.set(to, stagedActivity);
+	}
 	const staged = latestUsageRows.get(from);
 	const existing = latestUsageRows.get(to);
 	latestUsageRows.delete(from);
@@ -386,8 +427,12 @@ export function transferLatestUsageRow(from: TranscriptContainer, to: Transcript
 
 export function appendUsageRow(container: TranscriptContainer, input: RequestFooterInput): void {
 	demoteLatestUsageRow(container);
+	// A request that does not continue a turn opens a new one: never supersede the previous turn's summary.
+	if (input.continuesTurn) latestActivityRows.get(container)?.supersedeActivity();
+	else latestActivityRows.delete(container);
 	const block = createUsageRowBlock(input) as UsageRowBlock;
 	latestUsageRows.set(container, block);
+	if (input.activity) latestActivityRows.set(container, block);
 	container.addChild(block);
 }
 

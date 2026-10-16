@@ -365,6 +365,52 @@ describe("EventController mixed assistant text/tool rendering", () => {
 		expect(rendered).not.toContain(HIDDEN_READ_PATH_MARKER);
 	});
 
+	it("keeps one hidden summary per logical turn across tool-use continuations", async () => {
+		const { controller, chatContainer } = createFixture(true);
+		const request = (
+			content: AssistantMessage["content"],
+			stopReason: AssistantMessage["stopReason"],
+		): AssistantMessage => ({ ...assistantMessage(content), stopReason });
+		const send = async (message: AssistantMessage) => {
+			await controller.handleEvent({ type: "message_start", message: assistantMessage([]) } as Extract<
+				AgentSessionEvent,
+				{ type: "message_start" }
+			>);
+			await controller.handleEvent({ type: "message_end", message } as Extract<
+				AgentSessionEvent,
+				{ type: "message_end" }
+			>);
+		};
+		const prompt = async (text: string, timestamp: number) => {
+			const message = { role: "user", content: text, timestamp };
+			await controller.handleEvent({ type: "message_start", message } as unknown as Extract<
+				AgentSessionEvent,
+				{ type: "message_start" }
+			>);
+			await controller.handleEvent({ type: "message_end", message } as unknown as Extract<
+				AgentSessionEvent,
+				{ type: "message_end" }
+			>);
+		};
+		const read = (id: string): ToolCall => ({ type: "toolCall", id, name: "read", arguments: { path: `${id}.ts` } });
+		const bash = (id: string): ToolCall => ({ type: "toolCall", id, name: "bash", arguments: { command: id } });
+
+		await prompt("first", 1);
+		await send(request([read("turn-one-read")], "toolUse"));
+		await send(request([bash("turn-one-bash")], "toolUse"));
+		await send(request([{ type: "text", text: "first done" }], "stop"));
+		await prompt("second", 2);
+		await send(request([read("turn-two-read")], "toolUse"));
+		await send(request([{ type: "text", text: "second done" }], "stop"));
+
+		const rendered = Bun.stripANSI(chatContainer.render(120).join("\n"));
+		expect(rendered.match(/1 command · 1 read/g)).toHaveLength(1);
+		const summaryLines = rendered.split("\n").map(line => line.trim());
+		expect(summaryLines.filter(line => line === "1 read")).toHaveLength(1);
+		expect(rendered).not.toContain("turn-one-read.ts");
+		expect(rendered).not.toContain("turn-two-read.ts");
+	});
+
 	it("does not recreate a completed grouped read when later thinking arrives", async () => {
 		const { controller, chatContainer, ctx } = createFixture();
 		const readCall: ToolCall = {

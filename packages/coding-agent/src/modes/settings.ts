@@ -653,7 +653,7 @@ export const cfgDisplayHideToolActivity = register({
 		tab: "appearance",
 		group: "Display",
 		label: "Hide Tool Activity",
-		description: "Replace model-initiated tool calls and results with per-request activity counts",
+		description: "Replace model-initiated tool calls and results with activity counts for each turn",
 	},
 });
 

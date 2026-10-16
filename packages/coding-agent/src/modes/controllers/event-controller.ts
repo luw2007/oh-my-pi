@@ -29,7 +29,7 @@ import {
 	toolRenderName,
 } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TtsrNotificationComponent } from "@oh-my-pi/pi-tui/chat/ttsr-notification";
-import { requestFooterInput } from "@oh-my-pi/pi-tui/chat/request-footer";
+import { requestFooterInput, TurnActivityTally } from "@oh-my-pi/pi-tui/chat/request-footer";
 import {
 	appendUsageRow,
 	demoteLatestUsageRow,
@@ -178,6 +178,8 @@ export class EventController {
 	#turnStartedAt: number | undefined = undefined;
 	/** The running turn's token and cost totals, shown under its last answer on a TSP terminal. */
 	readonly #turnUsage = new TurnUsageTally();
+	/** The running turn's tool calls, summarized once per logical turn; closed by the terminal stop. */
+	#turnActivity = new TurnActivityTally();
 	/** When the last completed run ended; stale `#turnStartedAt` anchors are cleared against it. */
 	#lastAgentEndAt: number | undefined = undefined;
 	// Count of visible assistant content blocks (rendered non-empty text/thinking)
@@ -947,6 +949,7 @@ export class EventController {
 		this.#lastAssistantComponent = undefined;
 		this.#turnStartedAt = undefined;
 		this.#turnUsage.reset();
+		this.#turnActivity.reset();
 		this.#lastAgentEndAt = undefined;
 		this.#pinnedErrorComponent = undefined;
 		this.#pinnedErrorMessage = undefined;
@@ -1147,6 +1150,7 @@ export class EventController {
 			if (event.message.role === "custom" && isUserTurnInitiator(event.message)) {
 				this.#turnStartedAt = event.message.timestamp;
 				this.#turnUsage.reset();
+				this.#turnActivity.reset();
 			}
 			const taskJobToast = isNativeRendering() ? nativeTaskJobToast(event.message) : undefined;
 			if (
@@ -1179,6 +1183,7 @@ export class EventController {
 			if (event.message.attribution !== "agent") {
 				this.#turnStartedAt = event.message.timestamp;
 				this.#turnUsage.reset();
+				this.#turnActivity.reset();
 			}
 			const userText = textContent(event.message.content);
 			const imageBlocks =
@@ -1237,6 +1242,7 @@ export class EventController {
 				if (event.message.userInitiated) this.#turnStartedAt = event.message.timestamp;
 				else this.#turnStartedAt = undefined;
 				this.#turnUsage.reset();
+				this.#turnActivity.reset();
 			}
 		} else if (event.message.role === "fileMention") {
 			this.#resetReadGroup();
@@ -1409,8 +1415,10 @@ export class EventController {
 	 * elapsed figure. Mirrors {@link inheritDisplaceableTodo}. Drops the
 	 * candidate when the rebuild saw no user message.
 	 */
-	inheritTurnStart(turnStartedAt: number | undefined): void {
+	inheritTurnStart(turnStartedAt: number | undefined, turnActivity?: TurnActivityTally): void {
 		if (turnStartedAt !== undefined) this.#turnStartedAt = turnStartedAt;
+		// A replay of a still-running turn hands over its partial tool-call tally so the live continuation extends it.
+		if (turnActivity) this.#turnActivity = turnActivity;
 	}
 
 	/**
@@ -1824,6 +1832,7 @@ export class EventController {
 						? turnElapsedMs(this.#turnStartedAt, event.message)
 						: undefined,
 					omitActivity: event.message.stopReason === "aborted" && this.ctx.viewSession.isTtsrAbortPending,
+					turnActivity: this.#turnActivity,
 				},
 			);
 			if (footer) appendUsageRow(this.ctx.chatContainer, footer);

@@ -6,6 +6,7 @@
 
 - Hidden tool activity shows one categorized activity row for the latest completed assistant request, even with token usage off. Both activity and usage disappear when the next request starts.
 - Reduced CPU use when capturing long ASCII command output with per-line limits enabled.
+- Hidden tool activity aggregates all tool calls within each turn into one categorized summary and preserves earlier turns' summaries, even with token usage off; token usage remains latest-request-only.
 
 ### Fixed
 

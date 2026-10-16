@@ -8,6 +8,10 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ChatTranscriptBuilder } from "@oh-my-pi/pi-tui/chat/chat-transcript-builder";
+import {
+	chatTranscriptDisplayPreferences,
+	setChatTranscriptDisplayPreferences,
+} from "@oh-my-pi/pi-tui/chat/display-preferences";
 import { ReadToolGroupComponent } from "@oh-my-pi/pi-tui/chat/read-tool-group";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
@@ -131,16 +135,25 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 		expect(footers.map(isUsageRowVisible)).toEqual([false, true]);
 	});
 
-	it("rebuilds hidden history with exactly one current activity row", () => {
+	it("rebuilds hidden history with one summary per turn", () => {
 		const { ctx, helpers } = makeHarness(true);
 		ctx.chatContainer.setToolActivityVisible(false);
-		helpers.renderSessionContext({ messages: [...bashTurn(), ...readTurn()] } as SessionContext);
+		helpers.renderSessionContext({
+			messages: [
+				{ role: "user", content: "one", timestamp: 1 },
+				...bashTurn(),
+				{ role: "user", content: "two", timestamp: 2 },
+				...readTurn(),
+			],
+		} as SessionContext);
 		const footers = ctx.chatContainer.children.filter(isUsageRowBlock);
 		expect(footers).toHaveLength(2);
-		expect(footers[0]!.render(120)).toEqual([]);
-		const activity = footers.map(row => Bun.stripANSI(row.render(120).join("\n"))).join("\n");
-		expect(activity).not.toContain("1 command");
-		expect(activity.match(/1 read/g)).toHaveLength(1);
+		const first = Bun.stripANSI(footers[0]!.render(120).join("\n"));
+		const second = Bun.stripANSI(footers[1]!.render(120).join("\n"));
+		expect(first).toContain("1 command");
+		expect(first).not.toContain(USAGE_LABEL);
+		expect(second).toContain("1 read");
+		expect(second).toContain(USAGE_LABEL);
 	});
 
 	it("renders no usage row when showTokenUsage is off", () => {
@@ -288,7 +301,7 @@ describe("UsageRowBlock demotion lifecycle", () => {
 		expect(container.children.filter(isUsageRowBlock)).toHaveLength(0);
 	});
 
-	it("demoteLatestUsageRow hides the whole footer after a tool call turn", () => {
+	it("demoteLatestUsageRow hides usage but keeps the turn's activity summary", () => {
 		const { ctx, helpers } = makeHarness(true);
 		ctx.chatContainer.setToolActivityVisible(false);
 		helpers.renderSessionContext({ messages: bashTurn() } as SessionContext);
@@ -302,8 +315,7 @@ describe("UsageRowBlock demotion lifecycle", () => {
 		expect(isUsageRowVisible(footer)).toBe(false);
 		const after = Bun.stripANSI(footer.render(120).join("\n"));
 		expect(after).not.toContain(USAGE_LABEL);
-		expect(after).not.toContain("1 command");
-		expect(footer.render(120)).toEqual([]);
+		expect(after).toContain("1 command");
 	});
 
 	it("second turn start demotes the first turn's footer before appending", () => {
@@ -316,24 +328,84 @@ describe("UsageRowBlock demotion lifecycle", () => {
 		expect(isUsageRowVisible(footer)).toBe(false);
 	});
 
-	it("showTokenUsage=false: only the latest hidden activity footer remains", () => {
+	it("showTokenUsage=false: every turn keeps its own hidden activity summary", () => {
 		const { ctx, helpers } = makeHarness(false);
 		ctx.chatContainer.setToolActivityVisible(false);
-		helpers.renderSessionContext({ messages: bashTurn() } as SessionContext);
-		const footer = ctx.chatContainer.children.at(-1)!;
-		expect(isUsageRowBlock(footer)).toBe(true);
-		expect(isUsageRowVisible(footer)).toBe(false);
-		const rendered = Bun.stripANSI(footer.render(120).join("\n"));
-		expect(rendered).not.toContain(USAGE_LABEL);
-		expect(rendered).toContain("1 command");
-		const nextTurn = readTurn();
-		helpers.addMessageToChat(nextTurn[0]!);
-		expect(footer.render(120)).toEqual([]);
-		helpers.renderSessionContext({ messages: [...bashTurn(), ...nextTurn] } as SessionContext);
-		expect(footer.render(120)).toEqual([]);
-		const current = ctx.chatContainer.children.filter(isUsageRowBlock).filter(row => row.render(120).length > 0);
-		expect(current).toHaveLength(1);
-		expect(Bun.stripANSI(current[0]!.render(120).join("\n"))).toContain("1 read");
+		const nextTurn = readTurn("r2", "src/bar.ts");
+		const messages = [
+			{ role: "user", content: "one", timestamp: 1 },
+			...bashTurn(),
+			{ role: "user", content: "two", timestamp: 2 },
+			...nextTurn,
+		] as AgentMessage[];
+		helpers.renderSessionContext({ messages } as SessionContext);
+		const summaries = ctx.chatContainer.children
+			.filter(isUsageRowBlock)
+			.map(row => Bun.stripANSI(row.render(120).join("\n")).trim())
+			.filter(Boolean);
+		expect(summaries).toEqual(["1 command", "1 read"]);
+		// A live continuation after replay starts a new turn without erasing either summary.
+		helpers.addMessageToChat({ role: "user", content: "three", timestamp: 3 } as AgentMessage);
+		helpers.addMessageToChat(readTurn("r3")[0]!);
+		expect(
+			ctx.chatContainer.children
+				.filter(isUsageRowBlock)
+				.map(row => Bun.stripANSI(row.render(120).join("\n")).trim())
+				.filter(Boolean),
+		).toEqual(["1 command", "1 read"]);
+	});
+
+	it("aggregates a turn's tool-use continuations into one summary, replayed and incremental", () => {
+		const [first, firstResult] = bashTurn();
+		const [second, secondResult] = readTurn("r2");
+		const [third] = readTurn("r3");
+		const turn = [
+			{ ...first, stopReason: "toolUse" },
+			firstResult,
+			{ ...second, stopReason: "toolUse" },
+			secondResult,
+			{ ...third, content: [{ type: "text", text: "done" }] },
+		] as AgentMessage[];
+		const next = readTurn("r4", "src/next.ts");
+		const messages = [
+			{ role: "user", content: "one", timestamp: 1 },
+			...turn,
+			{ role: "user", content: "two", timestamp: 2 },
+			...next,
+		] as AgentMessage[];
+		const visibleSummaries = (container: TranscriptContainer) =>
+			container.children
+				.filter(isUsageRowBlock)
+				.map(row => Bun.stripANSI(row.render(120).join("\n")).trim())
+				.filter(Boolean);
+
+		const { ctx, helpers } = makeHarness(false);
+		ctx.chatContainer.setToolActivityVisible(false);
+		helpers.renderSessionContext({ messages } as SessionContext);
+		expect(visibleSummaries(ctx.chatContainer)).toEqual(["1 command · 1 read", "1 read"]);
+
+		const builder = new ChatTranscriptBuilder({
+			ui: { requestRender: () => {}, requestComponentRender: () => {} } as unknown as TUI,
+			cwd: process.cwd(),
+			requestRender: () => {},
+		});
+		builder.container.setToolActivityVisible(false);
+		const previousPreferences = { ...chatTranscriptDisplayPreferences };
+		setChatTranscriptDisplayPreferences({ showTokenUsage: false });
+		try {
+			builder.rebuild(
+				messages.map((message, index) => ({
+					type: "message",
+					id: `m${index}`,
+					parentId: index === 0 ? null : `m${index - 1}`,
+					timestamp: new Date(0).toISOString(),
+					message,
+				})),
+			);
+		} finally {
+			setChatTranscriptDisplayPreferences(previousPreferences);
+		}
+		expect(visibleSummaries(builder.container)).toEqual(["1 command · 1 read", "1 read"]);
 	});
 
 	it("rebuild then addMessageToChat demotes the replayed footer", () => {
@@ -387,6 +459,51 @@ describe("transferLatestUsageRow", () => {
 	});
 });
 
+describe("transferLatestUsageRow stable turn identity", () => {
+	beforeAll(async () => {
+		await initTheme();
+	});
+
+	it("collapses a replayed partial of the same logical turn into the preserved later summary", () => {
+		const staged = new TranscriptContainer();
+		const destination = new TranscriptContainer();
+		destination.setToolActivityVisible(false);
+		const usage = (readTurn()[0] as AssistantMessage).usage;
+		appendUsageRow(staged, { activity: "1 read", activityTurnId: "call-1", usage });
+		const replayed = staged.children.at(-1)!;
+		appendUsageRow(destination, { activity: "1 command · 1 read", activityTurnId: "call-1", usage });
+		const preserved = destination.children.at(-1)!;
+		destination.removeChild(preserved);
+		destination.addChild(replayed);
+		destination.addChild(preserved);
+		transferLatestUsageRow(staged, destination);
+		expect(destination.children).toEqual([replayed, preserved]);
+		expect(Bun.stripANSI(replayed.render(120).join("\n")).trim()).toBe("");
+		expect(isUsageRowVisible(replayed)).toBe(false);
+		expect(isUsageRowVisible(preserved)).toBe(true);
+		expect(Bun.stripANSI(preserved.render(120).join("\n"))).toContain("1 command · 1 read");
+	});
+
+	it("keeps both summaries when the interrupted turn's id differs from the live turn's", () => {
+		const staged = new TranscriptContainer();
+		const destination = new TranscriptContainer();
+		destination.setToolActivityVisible(false);
+		const usage = (readTurn()[0] as AssistantMessage).usage;
+		appendUsageRow(staged, { activity: "1 read", activityTurnId: "call-1", usage });
+		const replayed = staged.children.at(-1)!;
+		appendUsageRow(destination, { activity: "1 command", activityTurnId: "call-2", usage });
+		const preserved = destination.children.at(-1)!;
+		destination.removeChild(preserved);
+		destination.addChild(replayed);
+		destination.addChild(preserved);
+		transferLatestUsageRow(staged, destination);
+		expect(Bun.stripANSI(replayed.render(120).join("\n"))).toContain("1 read");
+		expect(Bun.stripANSI(preserved.render(120).join("\n"))).toContain("1 command");
+		expect(isUsageRowVisible(replayed)).toBe(false);
+		expect(isUsageRowVisible(preserved)).toBe(true);
+	});
+});
+
 describe("preserveExistingChat footer ownership", () => {
 	beforeEach(async () => {
 		await Settings.init({ inMemory: true, cwd: process.cwd() });
@@ -420,6 +537,6 @@ describe("preserveExistingChat footer ownership", () => {
 		expect(footers.map(isUsageRowVisible)).toEqual([false, true]);
 		demoteLatestUsageRow(ctx.chatContainer);
 		expect(isUsageRowVisible(preserved)).toBe(false);
-		expect(preserved.render(120)).toEqual([]);
+		expect(Bun.stripANSI(preserved.render(120).join("\n"))).toContain("preserved activity");
 	});
 });

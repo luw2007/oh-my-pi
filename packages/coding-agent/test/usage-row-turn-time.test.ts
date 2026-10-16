@@ -501,6 +501,38 @@ describe("focus-attach mid-turn keeps the prompt→yield delta", () => {
 		expect(rendered).toContain(TURN_ELAPSED_LABEL);
 		expect(rendered).toContain(USAGE_LABEL);
 	});
+
+	it("extends a replayed partial turn's tool summary on live continuation without duplicating it", async () => {
+		const { controller, helpers, chatContainer, streamState } = createFixture();
+		chatContainer.setToolActivityVisible(false);
+		streamState.isStreaming = true;
+		const toolUse = (id: string, name: string, args: Record<string, unknown>) =>
+			assistantMessage({
+				content: [{ type: "toolCall", id, name, arguments: args }],
+				stopReason: "toolUse",
+			});
+		const readResult = {
+			role: "toolResult",
+			toolCallId: "replayed-read",
+			toolName: "read",
+			content: [{ type: "text", text: "contents" }],
+			timestamp: PROMPT_AT,
+		} as unknown as AgentMessage;
+
+		controller.resetTranscriptAnchors();
+		helpers.renderSessionContext({
+			messages: [userMessage(), toolUse("replayed-read", "read", { path: "a.ts" }), readResult],
+		} as SessionContext);
+		await driveAssistantTurn(controller, toolUse("live-bash", "bash", { command: "echo ok" }));
+		await driveAssistantTurn(controller, assistantMessage());
+
+		const lines = renderedText(chatContainer)
+			.split("\n")
+			.map(line => line.trim());
+		expect(lines.filter(line => line === "1 command · 1 read")).toHaveLength(1);
+		expect(lines).not.toContain("1 read");
+		expect(lines).not.toContain("1 command");
+	});
 	it("includes effective thinking effort in live usage rows", async () => {
 		const { controller, chatContainer } = createFixture();
 		await driveAssistantTurn(controller, assistantMessage({ reasoningEffort: Effort.High }));

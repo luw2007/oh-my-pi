@@ -64,7 +64,7 @@ import {
 	routeLateDiagnostics,
 } from "./late-diagnostics-message";
 import { groupedReadCallIds, ReadToolGroupComponent, readArgsCollapseIntoGroup } from "./read-tool-group";
-import { requestFooterInput } from "./request-footer";
+import { requestFooterInput, TurnActivityTally } from "./request-footer";
 import { SkillMessageComponent } from "./skill-message";
 import { ToolExecutionComponent } from "./tool-execution";
 import { TranscriptContainer } from "../chrome/transcript-container";
@@ -104,6 +104,7 @@ export class ChatTranscriptBuilder {
 	#pendingRequest = false;
 	#turnStartedAt: number | undefined;
 	readonly #turnUsage = new TurnUsageTally();
+	readonly #turnActivity = new TurnActivityTally();
 	#lastAssistantUsage: Usage | undefined;
 	#servedModelTracker = new ServedModelTracker();
 	#waitingPoll: ToolExecutionComponent | null = null;
@@ -175,6 +176,7 @@ export class ChatTranscriptBuilder {
 		this.#pendingRequest = false;
 		this.#turnStartedAt = undefined;
 		this.#turnUsage.reset();
+		this.#turnActivity.reset();
 		this.#lastAssistantUsage = undefined;
 		this.#servedModelTracker = new ServedModelTracker();
 		this.#waitingPoll = null;
@@ -279,8 +281,10 @@ export class ChatTranscriptBuilder {
 				if (message.role === "user" && message.attribution !== "agent") {
 					this.#turnStartedAt = message.timestamp;
 					this.#turnUsage.reset();
+					this.#turnActivity.reset();
 				} else if (message.role === "developer" && message.synthetic) {
 					this.#turnUsage.reset();
+					this.#turnActivity.reset();
 					// A synthetic developer message initiates a fresh run (auto-
 					// continue, /goal, approved plan): replay must not inherit the
 					// preceding user prompt's timestamp, mirroring the live
@@ -349,6 +353,7 @@ export class ChatTranscriptBuilder {
 				if (message.role === "custom" && isUserTurnInitiator(message as CustomMessage)) {
 					this.#turnStartedAt = message.timestamp;
 					this.#turnUsage.reset();
+					this.#turnActivity.reset();
 				}
 				this.#appendCustomMessage(message);
 				break;
@@ -505,6 +510,7 @@ export class ChatTranscriptBuilder {
 		this.#pendingFooter = requestFooterInput(message, this.#deps, {
 			showUsage: displayPreferences.showTokenUsage,
 			turnElapsedMs: displayPreferences.showTurnTime ? this.#turnElapsedMs(message) : undefined,
+			turnActivity: this.#turnActivity,
 		});
 		this.#pendingReadCallIds = groupedReadCallIds(message);
 		this.#pendingRequest = true;

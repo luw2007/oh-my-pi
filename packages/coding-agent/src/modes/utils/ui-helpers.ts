@@ -50,7 +50,7 @@ import {
 	toolRenderName,
 } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TranscriptBlock, TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
-import { requestFooterInput } from "@oh-my-pi/pi-tui/chat/request-footer";
+import { requestFooterInput, TurnActivityTally } from "@oh-my-pi/pi-tui/chat/request-footer";
 import {
 	appendUsageRow,
 	demoteLatestUsageRow,
@@ -503,6 +503,7 @@ export class UiHelpers {
 		let pendingReadCallIds: string[] | undefined;
 		let pendingRequest = false;
 		let turnStartedAt: number | undefined;
+		const turnActivity = new TurnActivityTally();
 		const flushPendingUsage = () => {
 			if (!pendingRequest) return;
 			if (!pendingReadCallIds || !pendingReadCallIds.every(id => readGroup?.hasEntry(id))) {
@@ -732,6 +733,7 @@ export class UiHelpers {
 						turnElapsedMs: cfgDisplayShowTurnTime.get(this.ctx.settings)
 							? turnElapsedMs(turnStartedAt, message)
 							: undefined,
+						turnActivity,
 					},
 				);
 				pendingReadCallIds = groupedReadCallIds(message);
@@ -844,7 +846,10 @@ export class UiHelpers {
 				if (message.role === "user") resolveTodoSnapshot();
 				// Only genuinely user-attributed prompts anchor the delta; a mid-run
 				// agent-attributed `user` message (advisor tool-loop redirect) must not.
-				if (message.role === "user" && message.attribution !== "agent") turnStartedAt = message.timestamp;
+				if (message.role === "user" && message.attribution !== "agent") {
+					turnStartedAt = message.timestamp;
+					turnActivity.reset();
+				}
 				// A synthetic developer message initiates a fresh run (auto-continue,
 				// /goal, approved plan): replay must not inherit the preceding user
 				// prompt's timestamp, mirroring the live agent_start clear. Same-turn
@@ -855,9 +860,11 @@ export class UiHelpers {
 					// turn's own prompt: anchor the delta to it instead of clearing.
 					if (message.userInitiated) turnStartedAt = message.timestamp;
 					else turnStartedAt = undefined;
+					turnActivity.reset();
 				}
 				if (message.role === "custom" && isUserTurnInitiator(message as CustomMessage)) {
 					turnStartedAt = message.timestamp;
+					turnActivity.reset();
 				}
 				// All other messages use standard rendering
 				this.ctx.addMessageToChat(message, { reuseSettledComponent: options.reuseSettledComponents });
@@ -887,7 +894,7 @@ export class UiHelpers {
 		// so the in-flight assistant `message_end` would otherwise render the
 		// usage row without the elapsed figure. Mirrors inheritDisplaceableTodo.
 		if (this.ctx.viewSession.isStreaming) {
-			this.ctx.eventController?.inheritTurnStart(turnStartedAt);
+			this.ctx.eventController?.inheritTurnStart(turnStartedAt, turnActivity);
 		}
 		// Re-register parked background cards with the controller: focus
 		// attach resets its `#backgroundCallIds` before replaying, and unlike
