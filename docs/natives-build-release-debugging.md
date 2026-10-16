@@ -373,6 +373,9 @@ bun --cwd=packages/natives run build:bindings
 
 # Compile a standalone binary embedding the host addon (CROSS_TARGET=<id> for another target)
 bun --cwd=packages/coding-agent run build
+
+# Linux/macOS host only: ahead-of-time compiled binary (lower boot CPU, larger file; needs a Pi-Bolt runtime `bun`)
+OMP_AOT_RUNTIME=/path/to/pi-bolt-runtime/bun bun --cwd=packages/coding-agent run build
 ```
 
 ## Orchestrator-side content-addressed build cache (robomp)

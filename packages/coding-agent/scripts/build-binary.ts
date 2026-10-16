@@ -2,7 +2,7 @@
 
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { compileCodingAgent } from "./compile-binary";
+import { AOT_BUILD_ENV, compileCodingAgent } from "./compile-binary";
 
 const packageDir = path.join(import.meta.dir, "..");
 const repoRoot = path.join(packageDir, "..", "..");
@@ -57,8 +57,12 @@ if (
 const transformersVersion = transformersManifest.version;
 
 async function runCommand(command: string[]): Promise<void> {
+	// Helpers run on the stock `bun`, which rejects the Pi-Bolt-only JSC options of an AOT build.
+	const env = { ...Bun.env };
+	for (const key of Object.keys(AOT_BUILD_ENV)) delete env[key];
 	const proc = Bun.spawn(command, {
 		cwd: packageDir,
+		env,
 		stdout: "inherit",
 		stderr: "inherit",
 	});
@@ -69,6 +73,20 @@ async function runCommand(command: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	// AOT images are compiled by a Pi-Bolt runtime whose JSC options are read at process start:
+	// re-run this script under it, with them set, and let that process do the build.
+	const aotRuntime = Bun.env.OMP_AOT_RUNTIME;
+	if (aotRuntime) {
+		const proc = Bun.spawn([aotRuntime, import.meta.path], {
+			cwd: packageDir,
+			env: { ...Bun.env, ...AOT_BUILD_ENV, OMP_AOT_RUNTIME: "", OMP_AOT_BUILD: "1" },
+			stdout: "inherit",
+			stderr: "inherit",
+		});
+		process.exitCode = await proc.exited;
+		return;
+	}
+	const aot = Bun.env.OMP_AOT_BUILD === "1";
 	const crossBuild = resolveCrossBuild(Bun.env.CROSS_TARGET);
 	const shouldAdhocSign =
 		process.platform === "darwin" &&
@@ -95,6 +113,7 @@ async function main(): Promise<void> {
 			executablePath: Bun.env.BUN_COMPILE_EXECUTABLE_PATH || undefined,
 			skipBuiltinCodesign: shouldAdhocSign,
 			buildTag: Bun.env.PI_BUILD_TAG || undefined,
+			aot,
 		});
 
 		if (shouldAdhocSign) {
