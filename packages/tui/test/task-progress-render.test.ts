@@ -73,6 +73,25 @@ describe("task progress rendering", () => {
 		setShimmerMode("classic");
 	});
 
+	it("shows tool calls and generated-token throughput beside a completed subagent", async () => {
+		const theme = (await getThemeByName("dark"))!;
+		const text = Bun.stripANSI(
+			taskToolRenderer
+				.renderResult(
+					{
+						content: [],
+						details: detailsFor(runningProgress({ toolCount: 1, outputTokens: 45, durationMs: 5000 })),
+					},
+					{ expanded: false, isPartial: true },
+					theme,
+				)
+				.render(180)
+				.join("\n"),
+		);
+		expect(text).toContain("1 tool");
+		expect(text).toContain("9.0/s");
+	});
+
 	it("shortens current and recent path arguments without rewriting search patterns", async () => {
 		const theme = (await getThemeByName("dark"))!;
 		const file = `${os.homedir()}/private/file`;

@@ -738,6 +738,8 @@ export interface TspAgentProps {
 		tools?: number;
 		requests?: number;
 		tokens?: number;
+		/** Cumulative generated tokens, excluding prompt and cache tokens. */
+		outputTokens?: number;
 		context?: number;
 		contextLabel?: string;
 		/** The agent's own completion estimate, 0–1; drawn while running. */

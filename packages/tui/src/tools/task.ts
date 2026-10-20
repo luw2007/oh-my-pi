@@ -747,7 +747,10 @@ function renderAgentProgress(
 				progress.status === "running" && !fullDescription
 					? ` ${theme.fg("muted", previewLine(sanitizeText(progress.assignment ?? progress.task), 40))}`
 					: undefined,
-			stats: progress.status === "running" || progress.status === "completed" ? progress : undefined,
+			stats:
+				progress.status === "running" || progress.status === "completed"
+					? { ...progress, outputTokens: progress.outputTokens }
+					: undefined,
 			completionPercent: progress.completionPercent,
 		},
 		theme,
@@ -1098,9 +1101,12 @@ function renderAgentResult(
 	)}${badges}`;
 	statusLine += formatAgentStatRun(
 		{
+			toolCount: result.toolCount,
 			requests: result.requests,
 			contextTokens: result.contextTokens,
 			contextWindow: result.contextWindow,
+			outputTokens: result.usage?.output,
+			durationMs: result.durationMs,
 			cost: result.usage?.cost.total ?? 0,
 		},
 		theme,
@@ -1894,6 +1900,7 @@ function describeProgressAgent(progress: AgentProgress, state: AgentDescribeStat
 				tools: progress.toolCount || undefined,
 				requests: progress.requests || undefined,
 				tokens: progress.tokens || undefined,
+				outputTokens: progress.outputTokens,
 				...contextStats(progress.contextTokens, progress.contextWindow),
 				done: running && progress.completionPercent !== undefined ? progress.completionPercent / 100 : undefined,
 				cost: progress.cost > 0 ? progress.cost : undefined,
@@ -1950,8 +1957,10 @@ function describeResultAgent(result: SingleResult, state: AgentDescribeState, de
 			thinking: thinkingToken(result.resolvedThinkingLevel),
 			tool: null,
 			stats: {
+				tools: result.toolCount,
 				requests: result.requests || undefined,
 				tokens: result.tokens || undefined,
+				outputTokens: result.outputTokens,
 				...contextStats(result.contextTokens, result.contextWindow),
 				cost: cost > 0 ? cost : undefined,
 				took: result.durationMs,
@@ -2346,6 +2355,8 @@ export interface AgentProgress {
 	toolCount: number;
 	/** Count of assistant requests (assistant message_end events) across the run. Drives the soft request budget guard. */
 	requests: number;
+	/** Cumulative generated tokens, excluding prompt and cache tokens. */
+	outputTokens?: number;
 	/** Cumulative input + output + cacheWrite tokens across all turns. Excludes cacheRead (re-reads cached context every turn, making cumulative sum misleading). */
 	tokens: number;
 	/**
@@ -2433,6 +2444,10 @@ export interface SingleResult {
 	 */
 	structuredOutput?: StructuredSubagentOutput;
 	durationMs: number;
+	/** Count of completed tool calls across the run. */
+	toolCount?: number;
+	/** Cumulative generated tokens, excluding prompt and cache tokens. */
+	outputTokens?: number;
 	/** Cumulative input + output + cacheWrite tokens across all turns. Excludes cacheRead (re-reads cached context every turn, making cumulative sum misleading). */
 	tokens: number;
 	/** Count of assistant requests (assistant message_end events) across the run. */

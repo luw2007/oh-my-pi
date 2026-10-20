@@ -19,6 +19,10 @@ export interface AgentStats {
 	requests?: number;
 	contextTokens?: number;
 	contextWindow?: number;
+	/** Cumulative generated tokens, excluding prompt and cache tokens. */
+	outputTokens?: number;
+	/** Wall-clock duration used to calculate generated-token throughput. */
+	durationMs?: number;
 	cost?: number;
 }
 
@@ -26,7 +30,7 @@ export interface AgentStats {
 export function formatAgentStatRun(stats: AgentStats, theme: Theme): string {
 	let line = "";
 	if (stats.toolCount) {
-		line += `${theme.sep.dot}${theme.fg("dim", `${formatNumber(stats.toolCount)} ${theme.icon.extensionTool}`)}`;
+		line += `${theme.sep.dot}${theme.fg("dim", `${formatNumber(stats.toolCount)} ${stats.toolCount === 1 ? "tool call" : "tool calls"}`)}`;
 	}
 	if (stats.requests) {
 		line += `${theme.sep.dot}${theme.fg("dim", `${formatNumber(stats.requests)} req`)}`;
@@ -37,6 +41,12 @@ export function formatAgentStatRun(stats: AgentStats, theme: Theme): string {
 				? formatContextUsage((stats.contextTokens / stats.contextWindow) * 100, stats.contextWindow)
 				: formatNumber(stats.contextTokens);
 		line += `${theme.sep.dot}${theme.fg("dim", context)}`;
+	}
+	if (stats.outputTokens && stats.outputTokens > 0 && stats.durationMs && stats.durationMs >= 100) {
+		const tokensPerSecond = (stats.outputTokens * 1000) / stats.durationMs;
+		if (Number.isFinite(tokensPerSecond) && tokensPerSecond > 0) {
+			line += `${theme.sep.dot}${theme.fg("dim", `${tokensPerSecond.toFixed(1)}/s`)}`;
+		}
 	}
 	if (stats.cost && stats.cost > 0)
 		line += `${theme.sep.dot}${theme.fg("statusLineCost", `$${stats.cost.toFixed(2)}`)}`;
@@ -125,7 +135,12 @@ export function renderAgentTreeRow(
 	if (live && options.completionPercent !== undefined) {
 		line += `${theme.sep.dot}${theme.fg("accent", `${options.completionPercent}%`)}`;
 	}
-	if (options.stats) line += formatAgentStatRun(options.stats, theme);
+	if (options.stats) {
+		line += formatAgentStatRun(
+			{ ...options.stats, durationMs: options.stats.durationMs ?? options.durationMs },
+			theme,
+		);
+	}
 	if (options.durationMs !== undefined && options.durationMs > 0) {
 		line += `${theme.sep.dot}${theme.fg("dim", formatDuration(options.durationMs))}`;
 	}

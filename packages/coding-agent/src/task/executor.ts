@@ -1341,6 +1341,7 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 		recentOutput: [],
 		toolCount: 0,
 		requests: 0,
+		outputTokens: 0,
 		tokens: 0,
 		cost: 0,
 		durationMs: 0,
@@ -2071,8 +2072,10 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 					if (role === "assistant") {
 						const costRecord = isRecord(messageUsage.cost) ? messageUsage.cost : undefined;
 						hasUsage = true;
+						const outputTokens = getNumberField(messageUsage, "output") ?? 0;
 						accumulatedUsage.input += getNumberField(messageUsage, "input") ?? 0;
-						accumulatedUsage.output += getNumberField(messageUsage, "output") ?? 0;
+						accumulatedUsage.output += outputTokens;
+						progress.outputTokens = (progress.outputTokens ?? 0) + outputTokens;
 						accumulatedUsage.cacheRead += getNumberField(messageUsage, "cacheRead") ?? 0;
 						accumulatedUsage.cacheWrite += getNumberField(messageUsage, "cacheWrite") ?? 0;
 						accumulatedUsage.totalTokens += getNumberField(messageUsage, "totalTokens") ?? 0;
@@ -2936,6 +2939,8 @@ async function finalizeRunResult(args: FinalizeRunArgs): Promise<SingleResult> {
 		truncated: Boolean(truncated),
 		...(finalized.structuredOutput ? { structuredOutput: finalized.structuredOutput } : {}),
 		durationMs: Date.now() - args.startTime,
+		toolCount: progress.toolCount,
+		outputTokens: progress.outputTokens,
 		tokens: progress.tokens,
 		requests: progress.requests,
 		contextTokens: progress.contextTokens,
@@ -3993,6 +3998,8 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			stderr: "Cancelled before start",
 			truncated: false,
 			durationMs: 0,
+			toolCount: 0,
+			outputTokens: 0,
 			tokens: 0,
 			requests: 0,
 			modelOverride,
