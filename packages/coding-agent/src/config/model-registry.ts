@@ -1,5 +1,11 @@
 import * as path from "node:path";
-import type { ApiKeyResolver, FetchImpl, ResolvedApiKey, UsageProvider } from "@oh-my-pi/pi-ai";
+import {
+	type ApiKeyResolver,
+	completeSimple,
+	type FetchImpl,
+	type ResolvedApiKey,
+	type UsageProvider,
+} from "@oh-my-pi/pi-ai";
 import { type AuthApiKeyOptions, oauthAccountKey } from "@oh-my-pi/pi-ai/auth-storage";
 import { registerCustomApi, unregisterCustomApis } from "@oh-my-pi/pi-ai/api-registry";
 import { registerOAuthProvider, unregisterOAuthProvider, unregisterOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
@@ -10,6 +16,7 @@ import { getEnvApiKey } from "@oh-my-pi/pi-ai/env-api-key";
 import { OAuthRefreshUnavailableError } from "@oh-my-pi/pi-ai/error";
 import type {
 	Api,
+	AssistantMessage,
 	Context,
 	Model,
 	ModelSpec,
@@ -3272,6 +3279,24 @@ export class ModelRegistry {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
+	}
+
+	/**
+	 * Run one completion with registry-resolved auth through the historical Pi
+	 * extension facade (`ctx.modelRegistry.complete`). Legacy callers pass the
+	 * system prompt as a single string; OMP's context carries a string array.
+	 */
+	complete<TApi extends Api>(
+		model: Model<TApi>,
+		context: Omit<Context, "systemPrompt"> & { systemPrompt?: string | string[] },
+		options?: SimpleStreamOptions,
+	): Promise<AssistantMessage> {
+		const { systemPrompt, ...rest } = context;
+		return completeSimple(
+			model,
+			{ ...rest, systemPrompt: typeof systemPrompt === "string" ? [systemPrompt] : systemPrompt },
+			{ ...options, apiKey: options?.apiKey ?? this.resolver(model, options?.sessionId) },
+		);
 	}
 
 	/**
