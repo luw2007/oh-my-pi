@@ -11,6 +11,7 @@
 - Rebuilt activity footers preserve later existing usage-row ownership and retain completed billed wait history.
 - Managed skills created or updated by `learn` and `manage_skill` now disable automatic model invocation while remaining explicitly accessible; authored skills are unchanged.
 - Live and restored Magpie response stats display the gateway's actual served model instead of its requested group route, without appending a requested effort that the router may not have used.
+- Merged upstream compact wait-poll cards: collapsed waiting polls render the aggregate `waiting on N jobs` header instead of per-job rows, and a demoted usage footer keeps its activity line while hiding its metrics; poll displacement tests assert the retained-history contract rather than the exact card copy.
 - Legacy Pi extensions calling `ctx.modelRegistry.complete()` (e.g. `pi-intercom` handover) now run instead of failing with `ctx.modelRegistry.complete is not a function`.
 ## [18.12.5] - 2026-10-21
 

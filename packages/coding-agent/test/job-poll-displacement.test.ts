@@ -270,7 +270,10 @@ describe("EventController displaces consecutive waiting polls", () => {
 		expect(children).not.toContain(first);
 		expect(children).toContain(footer);
 		expect(isUsageRowVisible(footer)).toBe(false);
-		expect(footer.render(120)).toEqual([]);
+		// Demotion hides only the superseded metrics; the retained activity line stays visible.
+		const footerText = Bun.stripANSI(footer.render(120).join("\n"));
+		expect(footerText).toContain("1 tool call");
+		expect(footerText).not.toContain("4.2K");
 	});
 
 	it("seals the waiting poll in place when a different tool runs next", async () => {
@@ -506,7 +509,9 @@ describe("#12248 completed wait turn replay", () => {
 			for (const poll of polls) poll.seal();
 			expect(polls).toHaveLength(2);
 			const output = children.map(child => Bun.stripANSI(child.render(120).join("\n")));
-			for (const poll of polls) expect(output[children.indexOf(poll)]).toContain("job 0");
+			// Compact waiting cards render the aggregate waiting header instead of per-job rows;
+			// retained, non-empty poll history is the contract, not the exact copy.
+			for (const poll of polls) expect(output[children.indexOf(poll)].trim()).not.toBe("");
 			const footers = children.filter(isUsageRowBlock);
 			expect(footers).toHaveLength(2);
 			expect(footers.map(isUsageRowVisible)).toEqual([false, true]);
