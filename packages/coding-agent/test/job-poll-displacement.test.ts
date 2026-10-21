@@ -107,7 +107,7 @@ describe("wait block lifecycle", () => {
 		component.seal();
 		expect(component.isDisplaceableBlock()).toBe(false);
 		expect(component.isTranscriptBlockFinalized()).toBe(true);
-		expect(Bun.stripANSI(component.render(100).join("\n"))).toContain("job 0");
+		expect(Bun.stripANSI(component.render(100).join("\n"))).toContain("waiting on 2 jobs");
 	});
 
 	it("finalizes a poll that observed a settled job", () => {
@@ -244,7 +244,7 @@ describe("EventController displaces consecutive waiting polls", () => {
 		await runPoll(controller, children, "t2");
 		expect(children).toContain(first);
 		expect(children.indexOf(first)).toBe(children.indexOf(metrics) - 1);
-		expect(Bun.stripANSI(first.render(100).join("\n"))).toContain("job 0");
+		expect(Bun.stripANSI(first.render(100).join("\n"))).toContain("waiting on");
 		expect(Bun.stripANSI(metrics.render(100).join("\n"))).toContain("4.2K");
 	});
 

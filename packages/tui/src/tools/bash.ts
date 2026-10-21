@@ -7,6 +7,7 @@ import { formatOutputPaneLines } from "../render/output-pane";
 import {
 	capPreviewLines,
 	DEFAULT_TERMINAL_PREVIEW_LINES,
+	formatDuration,
 	formatToolWorkingDirectory,
 	previewWindowRows,
 	replaceTabs,
@@ -471,9 +472,14 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 								},
 								uiTheme,
 							);
+				const elapsedMs = options.executionStarted ? options.elapsedMs : undefined;
 				return {
 					header,
 					phase: options.spinnerFrame !== undefined ? "running" : "pending",
+					footerMeta:
+						elapsedMs === undefined || elapsedMs < 1000
+							? undefined
+							: uiTheme.fg("dim", `elapsed ${formatDuration(Math.floor(elapsedMs / 1000) * 1000)}`),
 					sections: [{ content: capPreviewLines(cmdLines, uiTheme, { expanded: options.expanded }) }],
 				};
 			});
@@ -529,6 +535,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 			let cachedIsPartial: boolean | undefined;
 			let cachedPreviewWindow: number | undefined;
 			let cachedSnapshot: ToolCardSnapshot | undefined;
+			let cachedElapsedSecond: number | undefined;
 			const dropSnapshot = () => {
 				cachedSnapshot = undefined;
 				cachedWidth = undefined;
@@ -537,6 +544,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 				cachedRawOutput = undefined;
 				cachedIsPartial = undefined;
 				cachedPreviewWindow = undefined;
+				cachedElapsedSecond = undefined;
 			};
 
 			return framedToolCard(
@@ -554,6 +562,11 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 
 					const isPartial = options.isPartial === true;
 					const previewWindow = previewWindowRows();
+					// A running command shows its live elapsed time in the bottom
+					// border; key the cache on whole seconds so it advances once a
+					// second instead of rebuilding every spinner frame.
+					const liveElapsedMs = isPartial && details?.wallTimeMs === undefined ? options.elapsedMs : undefined;
+					const elapsedSecond = liveElapsedMs === undefined ? undefined : Math.floor(liveElapsedMs / 1000);
 
 					if (
 						cachedSnapshot !== undefined &&
@@ -562,7 +575,8 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 						cachedExpanded === expanded &&
 						cachedRawOutput === rawOutput &&
 						cachedIsPartial === isPartial &&
-						cachedPreviewWindow === previewWindow
+						cachedPreviewWindow === previewWindow &&
+						cachedElapsedSecond === elapsedSecond
 					) {
 						return cachedSnapshot;
 					}
@@ -577,13 +591,11 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 						rawOutputArtifact.artifactId,
 						isError,
 					);
-					const timeoutLine =
-						statsParts.length > 0
-							? uiTheme.fg(
-									"dim",
-									`${uiTheme.format.bracketLeft}${statsParts.join(" | ")}${uiTheme.format.bracketRight}`,
-								)
-							: undefined;
+					if (elapsedSecond !== undefined && elapsedSecond > 0) {
+						statsParts.unshift(`elapsed ${formatDuration(elapsedSecond * 1000)}`);
+					}
+					const footerMeta =
+						statsParts.length > 0 ? uiTheme.fg("dim", statsParts.join(uiTheme.sep.dot)) : undefined;
 					let warningLine: string | undefined;
 					if (details?.meta?.artifactError || (details?.meta?.truncation && !showingFullOutput)) {
 						warningLine = formatStyledTruncationWarning(details.meta, uiTheme) ?? undefined;
@@ -611,12 +623,12 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 						uiTheme,
 					);
 					const outputLines: string[] = [...formatted.lines];
-					if (timeoutLine) outputLines.push(timeoutLine);
 					if (warningLine) outputLines.push(warningLine);
 
 					const snapshot: ToolCardSnapshot = {
 						header,
 						phase: isPartial ? "partial" : isError ? (isTimeout ? "warning" : "error") : "success",
+						footerMeta,
 						sections: [
 							{
 								// Viewport-sized tail window in every state — streaming and final
@@ -637,6 +649,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 					cachedRawOutput = rawOutput;
 					cachedIsPartial = isPartial;
 					cachedPreviewWindow = previewWindow;
+					cachedElapsedSecond = elapsedSecond;
 					cachedSnapshot = snapshot;
 					return snapshot;
 				},
@@ -715,6 +728,9 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 		},
 		mergeCallAndResult: true,
 		inline: true,
+		// The live elapsed footer reads `options.elapsedMs` at render time; a
+		// once-a-second repaint keeps it moving for a quiet running command.
+		tickElapsed: true,
 	} satisfies ToolRenderer<TArgs, BashToolDetails>;
 }
 
