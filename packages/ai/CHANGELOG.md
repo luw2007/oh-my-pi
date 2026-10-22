@@ -5,6 +5,10 @@
 ### Fixed
 
 - OpenAI Completions, OpenAI Responses, and Anthropic streams retain Magpie's canonical `X-Magpie-Model` and `X-Magpie-Provider` response headers as upstream metadata without changing the requested routing identity.
+### Added
+
+- Added `PI_ANTHROPIC_API_VERSION=2026-10-21` to send Anthropic API version 2026-10-21 to the official Anthropic API; sampling parameters are omitted under that version, which rejects them ([#16706](https://github.com/can1357/oh-my-pi/pull/16706) by [@H4vC](https://github.com/H4vC))
+
 ## [18.12.5] - 2026-10-21
 
 ### Added
