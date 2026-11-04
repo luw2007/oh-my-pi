@@ -126,7 +126,7 @@ describe("UiHelpers.renderSessionContext token-usage row placement", () => {
 			(component): component is ReadToolGroupComponent => component instanceof ReadToolGroupComponent,
 		);
 		expect(groups).toHaveLength(1);
-		const rendered = ctx.chatContainer.render(120).join("\n");
+		const rendered = Bun.stripANSI(ctx.chatContainer.render(120).join("\n"));
 		expect(rendered.indexOf("src/foo.ts")).toBeLessThan(rendered.indexOf("src/bar.ts"));
 		expect(rendered).not.toContain(USAGE_LABEL);
 		expect(rendered).not.toContain(USAGE_TS_LABEL);
@@ -241,7 +241,9 @@ describe("UiHelpers.renderSessionContext native turn usage", () => {
 			(component): component is AssistantMessageComponent => component instanceof AssistantMessageComponent,
 		);
 		expect(
-			assistant?.describe({} as never).c?.some(child => "p" in child && child.p?.role === "omp.turn.usage"),
+			assistant
+				?.describe({ cols: 120, reduceMotion: false, dark: true, supports: () => true, feature: () => true })
+				.c?.some(child => "p" in child && child.p?.role === "omp.turn.usage"),
 		).toBe(true);
 	});
 });

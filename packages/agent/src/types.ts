@@ -48,6 +48,22 @@ export type PrepareQueuedMessages = (
 	queue: QueuedMessageQueue,
 ) => QueuedMessagePreparation | undefined | Promise<QueuedMessagePreparation | undefined>;
 
+/**
+ * Synchronous arbiter over queued messages leaving a queue for delivery, for a
+ * queue whose messages someone else may withdraw concurrently (a session homed
+ * on another thread whose view pops them).
+ */
+export interface QueuedMessageGate {
+	/**
+	 * Called with the batch about to be removed from `queue` for delivery; returns
+	 * the candidates that must be dropped from the queue instead. The others are
+	 * claimed for delivery.
+	 */
+	claim(queue: QueuedMessageQueue, candidates: readonly AgentMessage[]): readonly AgentMessage[];
+	/** Called with claimed messages that left delivery undelivered (requeued, withdrawn, or cancelled). */
+	release(messages: readonly AgentMessage[]): void;
+}
+
 /** Called once an aside has been inserted into the agent's live context. */
 export const ASIDE_MESSAGE_COMMIT = Symbol("aside-message-commit");
 /** Symbol-keyed handoff for one finalized, tool-owned stream speculation session. */
@@ -283,7 +299,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 *
 	 * Polled while a tool batch runs (in "wait" mode, only when the batch holds an
 	 * interruptible tool) to decide whether to abort in-flight and skip
-	 * not-yet-started *interruptible* waits;
+	 * not-yet-started *interruptible* waits, unless they handle queued interrupts;
 	 * every other already-emitted call still executes and the message injects
 	 * at the batch boundary. The queue keeps
 	 * owning its messages until the loop reaches the next injection boundary and
@@ -457,6 +473,8 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * then strips from arguments before executing tools.
 	 */
 	intentTracing?: boolean;
+	/** Schema description of the injected intent field; `PI_INTENT_DESC` overrides it. Default `concise intent`. */
+	intentDescription?: string;
 	/**
 	 * Strip tool descriptions (top-level + nested schema annotations) from the
 	 * provider-bound tool specs. Use when the full catalog is rendered into the
@@ -672,7 +690,8 @@ export interface ToolCallContext {
 	providerMetadata?: ToolCallProviderMetadata;
 	/**
 	 * Cooperative steering signal: aborted when a queued user/steering message
-	 * (or an interrupting peer IRC) is detected while this tool batch runs.
+	 * (or an interrupting peer IRC) is detected while this tool batch runs. Its
+	 * `reason` names the source: a {@link SteeringInterruptSource} or `"irc"`.
 	 * Unlike the hard abort signal it NEVER kills the tool — long-running
 	 * tools MAY observe it (via `ctx.toolCall.steeringSignal`) to finish early
 	 * or background themselves so the message injects promptly; ignoring it is
@@ -1086,7 +1105,7 @@ export type ToolApprovalDecision =
 			 *  prompt policies to the tool it dispatches into. */
 			policyKey?: string;
 	  };
-export type ToolApproval = ToolApprovalDecision | ((args: unknown) => ToolApprovalDecision);
+export type ToolApproval = ToolApprovalDecision | ((args: unknown, context?: AgentToolContext) => ToolApprovalDecision);
 
 /**
  * Context passed to tool execution.
@@ -1195,6 +1214,13 @@ export interface AgentTool<
 	 */
 	interruptible?: boolean | ((args: Partial<Static<TParameters>>) => boolean);
 	/**
+	 * An interruptible tool can execute with an already-aborted
+	 * `TOOL_INTERRUPT_ABORT_REASON` signal to drain caller-owned wake events.
+	 * It must not block when that signal is aborted. External/user cancellation
+	 * still prevents execution. Omitted tools keep the usual pre-start skip.
+	 */
+	handlesToolInterrupt?: boolean;
+	/**
 	 * Controls how the INTENT_FIELD (`i`) is handled for this tool.
 	 * - `"require"` (default): `i` is injected and required in the parameter schema.
 	 * - `"optional"`: `i` is injected as an optional/nullable field.
@@ -1245,6 +1271,12 @@ export interface AgentTool<
 	 * approving the call can record them. Omit it (or return `undefined`) and the call prompts by tier.
 	 */
 	approvalCacheTargets?: (args: unknown) => readonly string[] | undefined;
+
+	/**
+	 * Paths a call reads beyond its working directory, matched against restricted folders when it
+	 * reports no `approvalCacheTargets`. Unlike cache targets they never key a remembered grant.
+	 */
+	approvalRestrictionPaths?: (args: unknown) => readonly string[] | undefined;
 
 	/** The main execution callback for this tool. */
 	execute: AgentToolExecFn<TParameters, TDetails, TTheme>;

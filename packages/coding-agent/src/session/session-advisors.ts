@@ -131,7 +131,7 @@ import {
 } from "../advisor/settings";
 import { cfgCompaction, cfgContextPromotionEnabled } from "./context-settings";
 import { resolveModelCompactionSettings } from "./model-compaction-threshold";
-import { cfgRetry, cfgTierAdvisor } from "./settings";
+import { cfgProvidersOpenaiCodexDaybreak, cfgRetry, cfgTierAdvisor } from "./settings";
 
 const ADVISOR_CODEX_SSE_MAX_ATTEMPTS = 1;
 
@@ -310,6 +310,8 @@ interface AdvisorRetryFallbackState {
 	originalSelector: string;
 	originalThinkingLevel: ThinkingLevel;
 	lastAppliedThinkingLevel: ThinkingLevel;
+	/** Whether the active fallback selector explicitly follows the primary's effort. */
+	autoThinking: boolean;
 	/** Set by a classifier refusal: no cooldown restore until a compaction or new conversation replaces the context. */
 	pinned: boolean;
 }
@@ -355,6 +357,15 @@ interface ActiveAdvisor {
 	 * 3-strike drop can fire.
 	 */
 	providerWaitRetries: number;
+	/**
+	 * Credential switches spent on the current failing batch, bounded by one
+	 * traversal of `provider`'s account pool. A switch only predicts a free
+	 * sibling; when retries keep landing on the same capped account, the spent
+	 * budget hands recovery to model fallback, a bounded wait, or the quota
+	 * latch (issue #17472). A fallback to another provider starts that provider's
+	 * own budget. Reset with {@link providerWaitRetries}.
+	 */
+	credentialSwitches: { provider: string; count: number } | undefined;
 	signature: string;
 }
 /** First index whose provider usage may anchor the advisor's context estimate. */
@@ -454,7 +465,8 @@ export interface SessionAdvisorsOptions {
 	/** WATCHDOG.yml problems found during discovery; surfaced once as a warning. */
 	configWarnings?: string[];
 	streamFn?: StreamFn;
-	transformProviderContext?: (context: Context, model: Model) => Context | Promise<Context>;
+	/** Builds each advisor's provider request transform; called once per advisor agent. */
+	createTransformProviderContext?: () => (context: Context, model: Model) => Context | Promise<Context>;
 }
 
 /** Options accepted when an advisor injects a primary-session message. */
@@ -474,8 +486,8 @@ export interface SessionAdvisorsHost {
 	yieldQueue: YieldQueue;
 	obfuscator(): SecretObfuscator | undefined;
 	providerSessionState: Map<string, ProviderSessionState>;
-	/** Live `providers.openaiWebsockets` hint for provider calls. */
-	preferWebsockets(): boolean | undefined;
+	/** Per-model WebSocket preference from the live transport settings (Codex and standard Responses). */
+	preferWebsockets(model: Model): boolean | undefined;
 	onPayload: SimpleStreamOptions["onPayload"] | undefined;
 	onResponse: SimpleStreamOptions["onResponse"] | undefined;
 	onSseEvent: SimpleStreamOptions["onSseEvent"] | undefined;
@@ -524,6 +536,8 @@ export interface SessionAdvisorsHost {
 	sessionId(): string;
 	/** Put an advisor's provider session under the primary session's account pools. */
 	restrictOAuthAccounts(providerSessionId: string): void;
+	/** Whether the owning session is the top-level main session or a spawned subagent (`"main"` when omitted). */
+	agentKind?(): "main" | "sub";
 }
 
 /**
@@ -554,7 +568,7 @@ export class SessionAdvisors {
 	#advisorContextPrompt: string | undefined;
 	#advisorMemoryPrompt: string | undefined;
 	#advisorStreamFn: StreamFn | undefined;
-	#transformProviderContext: ((context: Context, model: Model) => Context | Promise<Context>) | undefined;
+	#createTransformProviderContext: (() => (context: Context, model: Model) => Context | Promise<Context>) | undefined;
 	#advisors: ActiveAdvisor[] = [];
 	#advisorConfigs: AdvisorConfig[] | undefined;
 	#advisorConfigWarnings: string[];
@@ -629,7 +643,7 @@ export class SessionAdvisors {
 		this.#advisorConfigs = options.configs;
 		this.#advisorConfigWarnings = options.configWarnings ?? [];
 		this.#advisorStreamFn = options.streamFn;
-		this.#transformProviderContext = options.transformProviderContext;
+		this.#createTransformProviderContext = options.createTransformProviderContext;
 		if (this.#advisorEnabled) this.#buildAdvisorRuntime();
 	}
 
@@ -1070,7 +1084,7 @@ export class SessionAdvisors {
 			a.runtime.reset("conversation-boundary");
 			// A reset aborts any pending provider-block wait; clear its budget so the new
 			// conversation starts with a fresh retry allowance (issue #11947).
-			a.providerWaitRetries = 0;
+			this.#resetRecoveryBudgets(a);
 			this.#releaseRefusalPin(a);
 			// Resets the emission guard and every tool-side note state together.
 			a.adviseTool.resetDeliveredNotes();
@@ -1094,7 +1108,14 @@ export class SessionAdvisors {
 		const roster: AdvisorConfig[] = legacy ? [{ name: "default" }] : this.#advisorConfigs!;
 		const descriptors: AdvisorRuntimeDescriptor[] = [];
 		const usedSlugs = new Set<string>();
+		const sessionKind = this.#host.agentKind?.() ?? "main";
 		for (const config of roster) {
+			if (
+				(config.scope === "main" && sessionKind !== "main") ||
+				(config.scope === "subagent" && sessionKind !== "sub")
+			) {
+				continue;
+			}
 			let slug = legacy ? "" : slugifyAdvisorName(config.name);
 			if (slug) {
 				let candidate = slug;
@@ -1230,6 +1251,8 @@ export class SessionAdvisors {
 		const budget = this.#advisorMaxNotesPerUpdate(config);
 		// The service tier is bound at build time, so a `tier.advisor` edit must rebuild.
 		const tier = cfgTierAdvisor.get(this.#host.settings);
+		const scope = config.scope ?? "all";
+		const includeReasoning = config.includeReasoning !== false ? "1" : "0";
 		return [
 			config.name,
 			slug,
@@ -1239,6 +1262,8 @@ export class SessionAdvisors {
 			instructions,
 			budget,
 			tier,
+			scope,
+			includeReasoning,
 		].join("\u001f");
 	}
 
@@ -1410,10 +1435,10 @@ export class SessionAdvisors {
 			});
 			const baseAdvisorStreamFn = this.#advisorStreamFn ?? streamSimple;
 			const advisorStreamFn: StreamFn = (requestModel, context, streamOptions) => {
-				// Read per request so a mid-session `providers.openaiWebsockets` change reaches advisors.
+				// Read per request so transport setting changes reach existing advisors.
 				const options = {
 					...streamOptions,
-					preferWebsockets: streamOptions?.preferWebsockets ?? this.#host.preferWebsockets(),
+					preferWebsockets: streamOptions?.preferWebsockets ?? this.#host.preferWebsockets(requestModel),
 				};
 				if (requestModel.api === "openai-codex-responses") {
 					return baseAdvisorStreamFn(requestModel, context, {
@@ -1451,7 +1476,9 @@ export class SessionAdvisors {
 				onPayload: this.#host.onPayload,
 				onResponse: this.#host.onResponse,
 				onSseEvent: this.#host.onSseEvent,
-				transformProviderContext: this.#transformProviderContext,
+				// Built per advisor: the transform keeps per-conversation state (the
+				// date/cwd reminder), and each advisor is a conversation of its own.
+				transformProviderContext: this.#createTransformProviderContext?.(),
 				intentTracing: false,
 				transformAssistantMessage: message => {
 					quarantinedAdvisorOutput = quarantineAdvisorUnsafeOutput(
@@ -1573,6 +1600,7 @@ export class SessionAdvisors {
 				snapshotMessages: () => this.#host.agent.state.messages,
 				maintainContext: (incoming, signal) => this.#maintainAdvisorContext(advisorRef, incoming, signal),
 				obfuscator: this.#host.obfuscator(),
+				includeReasoning: descriptor.config.includeReasoning,
 				getModelIdentity: () => formatModelString(advisorRef.agent.state.model),
 				beginAdvisorUpdate: inProgress => {
 					advisorRef.recorder.beginTurn();
@@ -1595,7 +1623,7 @@ export class SessionAdvisors {
 					advisorRef.recorder.commitTurn();
 					// A completed turn ended the provider-block episode — start the next
 					// block's bounded wait budget fresh.
-					advisorRef.providerWaitRetries = 0;
+					this.#resetRecoveryBudgets(advisorRef);
 					const fallback = advisorRef.retryFallback;
 					if (!advisorRef.retryFallbackPendingSuccess || !fallback) return;
 					advisorRef.retryFallbackPendingSuccess = false;
@@ -1608,7 +1636,7 @@ export class SessionAdvisors {
 				onTurnAbandoned: () => {
 					advisorRef.recorder.abandonTurn();
 					// The dropped batch ends this episode; the next batch gets a fresh budget.
-					advisorRef.providerWaitRetries = 0;
+					this.#resetRecoveryBudgets(advisorRef);
 				},
 				notifyFailure: error => {
 					this.#advisorStatuses.set(slug, { name: advisorName, status: "error" });
@@ -1659,6 +1687,7 @@ export class SessionAdvisors {
 				pendingCoveredTurn: 0,
 				retryFallbackPendingSuccess: false,
 				providerWaitRetries: 0,
+				credentialSwitches: undefined,
 				signature,
 			};
 			this.#refreshAdvisorProviderIdentity(advisorRef);
@@ -1887,7 +1916,7 @@ export class SessionAdvisors {
 			a.runtime.reset(reason);
 			// Match the conversation-boundary re-prime: a reset must not carry a
 			// pending wait's provider-block budget into the reset conversation.
-			a.providerWaitRetries = 0;
+			this.#resetRecoveryBudgets(a);
 			if (compacted) this.#releaseRefusalPin(a);
 		}
 	}
@@ -1934,7 +1963,11 @@ export class SessionAdvisors {
 	}
 
 	/** Switch one advisor model while preserving its context and effort invariants. */
-	#setAdvisorModel(advisor: ActiveAdvisor, model: Model, requestedThinkingLevel: ThinkingLevel): ThinkingLevel {
+	#setAdvisorModel(
+		advisor: ActiveAdvisor,
+		model: Model,
+		requestedThinkingLevel: ThinkingLevel | undefined,
+	): ThinkingLevel {
 		const resolvedThinkingLevel = resolveThinkingLevelForModel(model, requestedThinkingLevel);
 		const nextThinkingLevel = resolvedThinkingLevel ?? ThinkingLevel.Inherit;
 		advisor.agent.setModel(model);
@@ -1970,9 +2003,9 @@ export class SessionAdvisors {
 	#retuneAutoThinkingAdvisors(): void {
 		const requested = this.#autoAdvisorThinkingLevel();
 		for (const advisor of this.#advisors) {
-			// A retry-fallback selector pinned its own effort for the fallback
-			// model; the retune resumes once the configured model is restored.
-			if (!advisor.autoThinking || advisor.runtime.disposed || advisor.retryFallback) continue;
+			// Concrete and bare fallback selectors keep their applied effort.
+			const autoThinking = advisor.retryFallback?.autoThinking ?? advisor.autoThinking;
+			if (!autoThinking || advisor.runtime.disposed) continue;
 			const next =
 				resolveThinkingLevelForModel(advisor.model, automaticThinkingLevel(advisor.model, requested)) ??
 				ThinkingLevel.Inherit;
@@ -1980,6 +2013,7 @@ export class SessionAdvisors {
 			advisor.agent.setThinkingLevel(toReasoningEffort(next));
 			advisor.agent.setDisableReasoning(shouldDisableReasoning(next));
 			advisor.thinkingLevel = next;
+			if (advisor.retryFallback) advisor.retryFallback.lastAppliedThinkingLevel = next;
 		}
 	}
 
@@ -2031,8 +2065,8 @@ export class SessionAdvisors {
 		if (!apiKey) return;
 		signal.throwIfAborted();
 
-		// An `auto` advisor skipped the retune while on the fallback: rejoin the
-		// primary's live level now, not the level it had when it fell back.
+		// Rejoin the primary's live level for an auto advisor, or restore the
+		// fixed effort it had before falling back.
 		const thinkingToApply = advisor.autoThinking
 			? this.#autoAdvisorThinkingLevel()
 			: advisor.thinkingLevel === fallback.lastAppliedThinkingLevel
@@ -2090,7 +2124,7 @@ export class SessionAdvisors {
 				advisor.providerSessionId,
 				{ error: message, modelId: currentModel.id, signal },
 			);
-			if (rotation.switched) return true;
+			if (rotation.switched && this.#spendCredentialSwitch(advisor, currentModel.provider)) return true;
 		}
 
 		const retryAfterMs = extractProviderRetryHint(currentModel.provider, message);
@@ -2115,7 +2149,7 @@ export class SessionAdvisors {
 					signal,
 				},
 			);
-			if (outcome.switched) return true;
+			if (outcome.switched && this.#spendCredentialSwitch(advisor, currentModel.provider)) return true;
 			usageRetryAtMs = outcome.retryAtMs;
 			usageBlockedUntilMs = outcome.blockedUntilMs;
 			usageRequestedBlockedUntilMs = outcome.requestedBlockedUntilMs;
@@ -2190,10 +2224,15 @@ export class SessionAdvisors {
 				signal.throwIfAborted();
 
 				const originalThinkingLevel = advisor.thinkingLevel;
-				const requestedThinkingLevel = selector.thinkingLevel ?? originalThinkingLevel;
+				// A `:auto` fallback entry follows the primary's resolved effort, like an `auto` advisor.
+				const requestedThinkingLevel =
+					selector.thinkingLevel === AUTO_THINKING
+						? automaticThinkingLevel(candidate, this.#autoAdvisorThinkingLevel())
+						: (selector.thinkingLevel ?? originalThinkingLevel);
 				const nextThinkingLevel = this.#setAdvisorModel(advisor, candidate, requestedThinkingLevel);
 				if (advisor.retryFallback) {
 					advisor.retryFallback.lastAppliedThinkingLevel = nextThinkingLevel;
+					advisor.retryFallback.autoThinking = selector.thinkingLevel === AUTO_THINKING;
 					advisor.retryFallback.pinned ||= primaryRefused;
 				} else {
 					advisor.retryFallback = {
@@ -2201,6 +2240,7 @@ export class SessionAdvisors {
 						originalSelector: currentSelector,
 						originalThinkingLevel,
 						lastAppliedThinkingLevel: nextThinkingLevel,
+						autoThinking: selector.thinkingLevel === AUTO_THINKING,
 						pinned: primaryRefused,
 					};
 				}
@@ -2217,6 +2257,26 @@ export class SessionAdvisors {
 			}
 		}
 		return waitOrDecline();
+	}
+
+	/**
+	 * Spend one credential switch from the advisor's one-pool-traversal budget
+	 * (stored accounts minus the failing one), the bound the main agent puts on
+	 * account-policy rotation. Returns false once spent: the auth layer's
+	 * `switched` only says a sibling looks unblocked, not that the next request
+	 * will use it.
+	 */
+	#spendCredentialSwitch(advisor: ActiveAdvisor, provider: string): boolean {
+		const spent = advisor.credentialSwitches?.provider === provider ? advisor.credentialSwitches.count : 0;
+		if (spent >= this.#host.modelRegistry.authStorage.credentials.list(provider).length - 1) return false;
+		advisor.credentialSwitches = { provider, count: spent + 1 };
+		return true;
+	}
+
+	/** Start the next failing batch with fresh provider-wait and credential-switch budgets. */
+	#resetRecoveryBudgets(advisor: ActiveAdvisor): void {
+		advisor.providerWaitRetries = 0;
+		advisor.credentialSwitches = undefined;
 	}
 
 	/**
@@ -2369,12 +2429,10 @@ export class SessionAdvisors {
 			compactionContextTokens(
 				providerContextTokens,
 				fixedPromptTokens +
-					estimateContextToolSchemaTokens(
-						agent.state.tools,
-						agent.tokenizer,
-						model,
-						this.#host.settings.revision,
-					) +
+					estimateContextToolSchemaTokens(agent.state.tools, agent.tokenizer, model, {
+						sourceRevision: this.#host.settings.revision,
+						pruneDescriptions: agent.prunesToolDescriptions(model),
+					}) +
 					storedConversationTokens +
 					incomingTokens,
 			);
@@ -2541,7 +2599,8 @@ export class SessionAdvisors {
 						promptCacheKey: advisorProviderSessionId,
 						metadata: advisorMetadata,
 						providerSessionState: this.#host.providerSessionState,
-						preferWebsockets: this.#host.preferWebsockets(),
+						preferWebsockets: this.#host.preferWebsockets(candidate),
+						codexAccessPrograms: cfgProvidersOpenaiCodexDaybreak.get(this.#host.settings),
 						codexCompaction,
 					},
 				);

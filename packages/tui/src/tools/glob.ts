@@ -22,6 +22,7 @@ import {
 	formatCount,
 	formatEmptyMessage,
 	formatErrorMessage,
+	formatStyledPath,
 	PREVIEW_LIMITS,
 } from "../render/render-utils";
 import { formatFullOutputReference } from "./output-meta";
@@ -203,7 +204,7 @@ export const globToolRenderer = {
 							expanded: options.expanded,
 							maxCollapsed: PREVIEW_LIMITS.COLLAPSED_ITEMS,
 							itemType: "file",
-							renderItem: line => uiTheme.fg("accent", line),
+							renderItem: line => formatStyledPath(line, uiTheme),
 						},
 						uiTheme,
 					);

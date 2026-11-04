@@ -9,11 +9,11 @@ import { prompt } from "@oh-my-pi/pi-utils";
 import { IrcBus } from "../irc/bus";
 import waitDescription from "../prompts/tools/wait.md" with { type: "text" };
 import type { ToolSession } from ".";
-import type { AsyncJob, AsyncJobManager } from "../async/job-manager";
+import type { AsyncJob, AsyncJobManagerApi } from "../async/job-manager";
 import { buildJobResult, snapshotJobs, undeliveredJobs } from "../async/job-control";
 import { hasLiveOwnedService, listServicesTolerant, waitForOwnedServiceCompletion } from "../launch/services";
 import { drainPendingInbox, messageResult } from "../irc/messaging";
-import type { AgentRegistry } from "../registry/agent-registry";
+import type { AgentRegistryApi } from "../registry/agent-registry";
 import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/irc";
 import type { CoordinationDetails } from "@oh-my-pi/pi-tui/tools/wait";
 import { throwIfAborted } from "./tool-errors";
@@ -25,7 +25,7 @@ const WAIT_MAX_MS = 30 * 60_000;
 const PROGRESS_INTERVAL_MS = 500;
 
 interface WaitMessaging {
-	registry: AgentRegistry;
+	registry: AgentRegistryApi;
 	senderId: string;
 }
 
@@ -35,7 +35,7 @@ function takeQueuedMessage(messaging: WaitMessaging | undefined): IrcMessage | u
 }
 
 interface PendingReplies {
-	/** Agents asked that can still answer: running, or holding the question for a turn of its own, and not blocked on the caller. */
+	/** Agents asked that can still answer: running, holding the question for a turn of its own, or that promised a reply, and not blocked on the caller. */
 	from: string[];
 	/** Agents asked that cannot answer before the caller finishes (see `AgentAwaits.blocksOn`). */
 	blocked: string[];
@@ -47,20 +47,22 @@ interface PendingReplies {
  * Agents the caller messaged during its current run that have not answered
  * yet, split by whether a reply can still come. A message back answers, and
  * so does a settled job of the agent the caller owns, which delivers its
- * result. Only a running agent, or one still holding the question for a turn
- * of its own (a subagent answers a message that reached it as it finished
- * after its result is out), can answer: one that went idle otherwise has
- * finished the turn it got it in, and any automatic reply (a woken subagent's
- * relayed output) has arrived by then.
+ * result. A running agent, or one still holding the question for a turn of
+ * its own (a subagent answers a message that reached it as it finished after
+ * its result is out), can answer, and so can a live one that sent progress
+ * promising a later reply. Any other idle agent has finished the turn it got
+ * the question in, and any automatic reply (a woken subagent's relayed
+ * output) has arrived by then.
  */
 function pendingReplies(messaging: WaitMessaging): PendingReplies {
 	const { registry, senderId } = messaging;
 	const replies: PendingReplies = { from: [], blocked: [], stopped: [] };
 	const since = registry.get(senderId)?.session?.runStartedAt ?? 0;
-	for (const { to, sentAt } of IrcBus.global().unansweredSends(senderId, since)) {
+	for (const { to, sentAt, promised } of IrcBus.global().unansweredSends(senderId, since)) {
 		const session = registry.get(to)?.session;
 		if (session && registry.awaits.blocksOn(to, senderId, sentAt)) replies.blocked.push(to);
-		else if (session?.isStreaming || session?.hasQueuedIrcFrom(senderId)) replies.from.push(to);
+		else if (session && (promised || session.isStreaming || session.hasQueuedIrcFrom(senderId)))
+			replies.from.push(to);
 		else replies.stopped.push(to);
 	}
 	return replies;
@@ -99,6 +101,7 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
 	readonly parameters = waitSchema;
 	readonly strict = true;
 	readonly interruptible = true;
+	readonly handlesToolInterrupt = true;
 	readonly approval = "read";
 	readonly loadMode = "essential";
 	readonly intent = "optional";
@@ -164,7 +167,7 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
 	 */
 	async #blockUntilWake(args: {
 		jobs: AsyncJob[];
-		manager: AsyncJobManager | undefined;
+		manager: AsyncJobManagerApi | undefined;
 		messaging: WaitMessaging | undefined;
 		serviceRunning: boolean;
 		signal: AbortSignal | undefined;

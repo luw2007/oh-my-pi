@@ -20,6 +20,7 @@ use xutf::graphemes_str;
 
 use super::{
 	super::{
+		ax::require_phone_screen as require_mirror_screen,
 		backend::{
 			DeliveryMode, ElementDelivery, ElementInput, KeyboardFocus, Modifiers, MouseButton,
 			PointerEvent,
@@ -33,7 +34,7 @@ use super::{
 	capture::{self, MacCapture},
 	keymap::{Keymap, Keystroke},
 	process::{self, RemoteScreen},
-	release::Route,
+	release::{self, Route},
 	release_guard, route, skylight,
 };
 
@@ -85,6 +86,7 @@ impl MacInput {
 			Target::Window(id) => {
 				let window = capture.window(id)?;
 				let (pid, wid) = window_identity(&window)?;
+				require_phone_screen(&window, process::remote_screen(pid))?;
 				match mode {
 					DeliveryMode::Background => {
 						let (window, wid) = attached_window(capture, window, pid, wid, &event)?;
@@ -239,6 +241,7 @@ impl MacInput {
 	) -> CoreResult<ElementDelivery> {
 		let (pid, wid) = window_identity(window)?;
 		let remote = process::remote_screen(pid);
+		require_phone_screen(window, remote)?;
 		// A takeover write goes to the window brought to the front for it.
 		let behind_user = || match mode {
 			DeliveryMode::Background => entry_front.require_behind(skylight::front_pid(), pid, wid),
@@ -327,6 +330,7 @@ impl MacInput {
 	) -> CoreResult<ElementDelivery> {
 		let (pid, wid) = window_identity(window)?;
 		let remote = process::remote_screen(pid);
+		require_phone_screen(window, remote)?;
 		let gap = key_gap(remote);
 		let chord = chord_keys(window, keys, remote, layout_strokes)?;
 		match mode {
@@ -405,6 +409,7 @@ impl MacInput {
 				// Read before anything about the target ([`EntryFront::before`]).
 				let entry_front = EntryFront::now();
 				let remote = process::remote_screen(pid);
+				require_phone_screen(&window, remote)?;
 				let gap = key_gap(remote);
 				let held = chord_keys(&window, keys, remote, layout_strokes)?;
 				match mode {
@@ -464,6 +469,13 @@ impl MacInput {
 			},
 		}
 	}
+}
+
+fn require_phone_screen(window: &DesktopWindow, remote: Option<RemoteScreen>) -> CoreResult<()> {
+	if remote == Some(RemoteScreen::HidReports) {
+		require_mirror_screen(&mut ax::MacAx::new(), window)?;
+	}
+	Ok(())
 }
 
 /// The current keyboard layout's lookup from character to key; `None` when
@@ -1956,9 +1968,10 @@ fn refuse_drag_source(
 ) -> CoreResult<()> {
 	let (x, y) = match event {
 		PointerEvent::Hold { x, y, button: MouseButton::Left, .. } => (*x, *y),
-		PointerEvent::Drag { path, button: MouseButton::Left, .. } => match path.first() {
-			Some(&start) => start,
-			None => return Ok(()),
+		PointerEvent::Drag { path, button: MouseButton::Left, .. }
+			if let Some(&start) = path.first() =>
+		{
+			start
 		},
 		_ => return Ok(()),
 	};
@@ -2286,7 +2299,7 @@ fn guarded_keys<'a>(
 				})
 			};
 			post_guarded(event, checked, |event| post(posted, to, event))?;
-			pressed.set(pressed.get() || is_key_press(event));
+			pressed.update(|v| v || is_key_press(event));
 			Ok(())
 		},
 	}
@@ -3274,14 +3287,20 @@ fn post_bare_keys(
 	gap: Duration,
 	guard: impl FnMut() -> CoreResult<()>,
 ) -> CoreResult<()> {
-	post_transitions(transitions, gap, guard, post_bare)
+	let mut held = BareModifiers::default();
+	post_transitions(transitions, gap, guard, |code, down| post_bare(code, down, &mut held))
 }
 
-/// Posts one bare key transition at the HID tap: a null source and no flag
-/// or Unicode overrides, so `CoreGraphics` derives modifier state from the
-/// transitions exactly as for a hardware keyboard. Only a press can be
-/// cancelled; a release always goes out.
-fn post_bare(code: u16, down: bool) -> CoreResult<()> {
+/// Posts one bare key transition at the HID tap: a null source and no
+/// Unicode override, so the target reads the key as a hardware keyboard's.
+/// Only a press can be cancelled; a release always goes out.
+///
+/// `CoreGraphics` gives a null-source event the HID system state's flags
+/// plus the key's own marks (Fn, Help, keypad), and posting it at the HID
+/// tap makes its flags the state, so one Delete, arrow or function key left
+/// Fn held for every later key. Each event therefore carries only the
+/// modifier keys its own run holds ([`BareModifiers`]).
+fn post_bare(code: u16, down: bool, held: &mut BareModifiers) -> CoreResult<()> {
 	if down {
 		control::check()?;
 	}
@@ -3293,7 +3312,50 @@ fn post_bare(code: u16, down: bool) -> CoreResult<()> {
 	// SAFETY: `raw` is a non-null create-rule event whose ownership moves
 	// here.
 	let event = unsafe { CGEvent::from_ptr(raw) };
+	let flags = held.flags(code, down, event.get_flags().bits());
+	event.set_flags(CGEventFlags::from_bits_retain(flags));
 	post_global(&event)
+}
+
+/// The modifier keys a run of bare transitions holds, as the device bits a
+/// hardware keyboard reports for each (left and right apart).
+#[derive(Clone, Copy, Debug, Default)]
+struct BareModifiers(u64);
+
+impl BareModifiers {
+	/// Modifier state bits a posted event's flags carry: Shift, Control,
+	/// Option, Command, the Fn, Help and keypad marks, and the per-side
+	/// device bits. Caps Lock and the rest of `derived` pass through.
+	const STATE: u64 = CGEventFlags::CGEventFlagShift.bits()
+		| CGEventFlags::CGEventFlagControl.bits()
+		| CGEventFlags::CGEventFlagAlternate.bits()
+		| CGEventFlags::CGEventFlagCommand.bits()
+		| CGEventFlags::CGEventFlagSecondaryFn.bits()
+		| CGEventFlags::CGEventFlagHelp.bits()
+		| CGEventFlags::CGEventFlagNumericPad.bits()
+		| release::DEVICE_FLAGS;
+
+	/// Flags for transition `(code, down)`, whose event `CoreGraphics`
+	/// created with `derived`: its modifier bits replaced by those of the
+	/// keys held once the transition is posted.
+	fn flags(&mut self, code: u16, down: bool, derived: u64) -> u64 {
+		let side = release::MODIFIERS
+			.iter()
+			.flat_map(|(_, sides)| sides)
+			.find(|&&(side, _)| side == code);
+		if let Some(&(_, device)) = side {
+			if down {
+				self.0 |= device;
+			} else {
+				self.0 &= !device;
+			}
+		}
+		let held = release::MODIFIERS
+			.iter()
+			.filter(|(_, sides)| sides.iter().any(|&(_, device)| self.0 & device != 0))
+			.fold(self.0, |held, (flag, _)| held | flag);
+		(derived & !Self::STATE) | held
+	}
 }
 
 /// Presses the chord `keys` as bare transitions ([`post_bare`]), running
@@ -3306,7 +3368,8 @@ fn press_bare_chord(
 	if keys.is_empty() {
 		return Err(empty_chord());
 	}
-	hold_transitions(keys, gap, guard, || Ok(()), post_bare)
+	let mut held = BareModifiers::default();
+	hold_transitions(keys, gap, guard, || Ok(()), |code, down| post_bare(code, down, &mut held))
 }
 
 /// Holds `keys` as bare transitions ([`post_bare`]) while `body` runs,
@@ -3317,7 +3380,8 @@ fn hold_bare_keys(
 	guard: impl FnMut() -> CoreResult<()>,
 	body: impl FnOnce() -> CoreResult<()>,
 ) -> CoreResult<()> {
-	hold_transitions(keys, gap, guard, body, post_bare)
+	let mut held = BareModifiers::default();
+	hold_transitions(keys, gap, guard, body, |code, down| post_bare(code, down, &mut held))
 }
 
 /// Presses `keys` in order through `post`, each once `guard` passes, runs
@@ -3842,7 +3906,7 @@ fn uncover(
 		match covering()? {
 			None => return Ok(()),
 			Some(owner) if Instant::now() >= deadline => {
-				let raise = raise_error.map_or_else(String::new, |error| format!(" ({error})"));
+				let raise = raise_error.map_or_default(|error| format!(" ({error})"));
 				return Err(DesktopError::input_failed(format!(
 					"window {wid} stays covered by process {} at the takeover input point{raise}, so \
 					 the input would land on the covering window; no input was sent",
@@ -4558,7 +4622,7 @@ mod tests {
 			},
 			|event| {
 				let typed = typed_event(event);
-				lost.set(lost.get() || (typed.0, typed.1) == (lose_after.0 as u32, lose_after.1));
+				lost.update(|v| v || (typed.0, typed.1) == (lose_after.0 as u32, lose_after.1));
 				posted.push((typed.0, typed.1, typed.2));
 				Ok(())
 			},
@@ -4655,7 +4719,7 @@ mod tests {
 			},
 			|code, down| {
 				posted.borrow_mut().push((code, down));
-				lost.set(lost.get() || lose_after == Some((code, down)));
+				lost.update(|v| v || lose_after == Some((code, down)));
 				Ok(())
 			},
 		);
@@ -4850,7 +4914,7 @@ mod tests {
 					failed = true;
 					return Err(DesktopError::input_failed("post failed"));
 				}
-				lost.set(lost.get() || lose_after == Some((code, down)));
+				lost.update(|v| v || lose_after == Some((code, down)));
 				Ok(())
 			},
 		);
@@ -4880,6 +4944,71 @@ mod tests {
 			(56, false),
 			(11, false)
 		]);
+	}
+
+	#[test]
+	fn bare_keys_carry_only_the_modifiers_they_hold() {
+		const FN: u64 = CGEventFlags::CGEventFlagSecondaryFn.bits();
+		const HELP: u64 = CGEventFlags::CGEventFlagHelp.bits();
+		const SHIFT: u64 = CGEventFlags::CGEventFlagShift.bits() | 0x2;
+		const CAPS: u64 = CGEventFlags::CGEventFlagAlphaShift.bits();
+		// An unlisted bit `CoreGraphics` sets on posted events passes through.
+		const MARK: u64 = 0x2000_0000;
+		// As `CoreGraphics` does at the HID tap: a null-source event gets the
+		// HID state's flags, updated by a Shift transition, plus Fn for Delete
+		// and Fn and Help for Insert; posting it makes its flags the state.
+		let state = std::cell::Cell::new(0);
+		let posted = std::cell::RefCell::new(Vec::new());
+		let post = |held: &mut BareModifiers, code: u16, down: bool| {
+			let derived = match (code, down) {
+				(56, true) => state.get() | SHIFT,
+				(56, false) => state.get() & !SHIFT,
+				(117, _) => state.get() | FN,
+				(114, _) => state.get() | FN | HELP,
+				_ => state.get(),
+			};
+			state.set(held.flags(code, down, derived | MARK));
+			posted.borrow_mut().push((code, down, state.get()));
+			Ok(())
+		};
+		// A takeover Delete, then Insert, then "Ba", each its own call.
+		for (name, code) in [(KeyName::Delete, 117), (KeyName::Insert, 114)] {
+			let mut held = BareModifiers::default();
+			let chord = [KeyPress { name, code }];
+			let post = |code, down| post(&mut held, code, down);
+			hold_transitions(&chord, Duration::ZERO, || Ok(()), || Ok(()), post).unwrap();
+		}
+		let mut held = BareModifiers::default();
+		let transitions = bare_transitions(&us_keys("Ba").unwrap());
+		let post_typed = |code, down| {
+			// Other input posted after Shift replaced the HID state.
+			if (code, down) == (11, true) {
+				state.set(0);
+			}
+			post(&mut held, code, down)
+		};
+		post_transitions(&transitions, Duration::ZERO, || Ok(()), post_typed).unwrap();
+		assert_eq!(posted.into_inner(), [
+			(117, true, MARK),
+			(117, false, MARK),
+			(114, true, MARK),
+			(114, false, MARK),
+			(56, true, MARK | SHIFT),
+			(11, true, MARK | SHIFT),
+			(11, false, MARK | SHIFT),
+			(56, false, MARK),
+			(0, true, MARK),
+			(0, false, MARK),
+		]);
+		assert_eq!(state.get(), MARK);
+		// Right-side keys keep their own device bit, releasing one side leaves
+		// the other's modifier held, and Caps Lock passes through.
+		let mut held = BareModifiers::default();
+		held.flags(56, true, 0);
+		let shift = CGEventFlags::CGEventFlagShift.bits();
+		assert_eq!(held.flags(60, true, 0), shift | 0x6);
+		assert_eq!(held.flags(56, false, 0), shift | 0x4);
+		assert_eq!(held.flags(60, false, CAPS | shift | 0x4), CAPS);
 	}
 
 	/// What a test's keyboard-layout read returns.
@@ -5819,7 +5948,7 @@ mod tests {
 		}
 
 		fn advance(&self, by: Duration) {
-			self.0.set(self.0.get() + by);
+			self.0.update(|v| v + by);
 		}
 
 		fn remaining(&self) -> Option<Duration> {
@@ -5878,7 +6007,7 @@ mod tests {
 			|| Ok(()),
 			|| clock.remaining(),
 			|_| {
-				reads.set(reads.get() + 1);
+				reads.update(|v| v + 1);
 				focused_box.get() == 0
 			},
 			|_| panic!("the first box has focus at once"),
@@ -5893,7 +6022,7 @@ mod tests {
 						match event.get_type() {
 							CGEventType::KeyDown => boxes.push(focused_box.get()),
 							// Each box hands focus to the next once its digit lands.
-							CGEventType::KeyUp => focused_box.set(focused_box.get() + 1),
+							CGEventType::KeyUp => focused_box.update(|v| v + 1),
 							_ => {},
 						}
 						Ok(())
@@ -5915,7 +6044,7 @@ mod tests {
 			|| clock.remaining(),
 			|_| false,
 			|left| {
-				polls.set(polls.get() + 1);
+				polls.update(|v| v + 1);
 				clock.advance(ELEMENT_FOCUS_POLL.min(left));
 				Ok(())
 			},
@@ -5955,7 +6084,7 @@ mod tests {
 				},
 				|_| panic!("the first read answers"),
 				|| {
-					fresh_reads.set(fresh_reads.get() + 1);
+					fresh_reads.update(|v| v + 1);
 					KeyboardFocus::default()
 				},
 				|| {
@@ -5985,7 +6114,7 @@ mod tests {
 			|| Err(DesktopError::ax_failed("setting AXFocused=true failed")),
 			|| (reads.get() < 3).then_some(ELEMENT_FOCUS_TIMEOUT),
 			|_| {
-				reads.set(reads.get() + 1);
+				reads.update(|v| v + 1);
 				false
 			},
 			|_| Ok(()),
@@ -6375,8 +6504,8 @@ mod tests {
 		.unwrap();
 		let returned = Instant::now();
 		assert_eq!(posted.len(), 4);
-		for pair in posted.windows(2) {
-			assert!(pair[1].duration_since(pair[0]) >= gap);
+		for &[earlier, later] in posted.array_windows() {
+			assert!(later.duration_since(earlier) >= gap);
 		}
 		assert!(returned.duration_since(posted[3]) >= gap);
 	}
@@ -6841,41 +6970,40 @@ mod tests {
 
 	#[test]
 	fn held_keys_need_the_proof_typing_needs_whatever_the_button() {
-		let ready = |button, holds_keys, in_overlay, conflict: Option<KeyboardConflict>, proven| {
-			let steps = std::cell::RefCell::new(Vec::new());
-			let result = ready_press(
-				42,
-				button,
-				holds_keys,
-				in_overlay,
-				|| conflict,
-				|in_overlay| {
-					steps
-						.borrow_mut()
-						.push(format!("make key, overlay {in_overlay}"));
-					Ok(true)
-				},
-				|| {
-					steps.borrow_mut().push("await key".to_string());
-					Ok(())
-				},
-				|seen| {
-					steps.borrow_mut().push(format!("prove keys {seen:?}"));
-					if proven {
+		let ready =
+			|button, holds_keys, in_overlay, conflict: Option<KeyboardConflict>, proven: bool| {
+				let steps = std::cell::RefCell::new(Vec::new());
+				let result = ready_press(
+					42,
+					button,
+					holds_keys,
+					in_overlay,
+					|| conflict,
+					|in_overlay| {
+						steps
+							.borrow_mut()
+							.push(format!("make key, overlay {in_overlay}"));
+						Ok(true)
+					},
+					|| {
+						steps.borrow_mut().push("await key".to_string());
 						Ok(())
-					} else {
-						Err(DesktopError::invalid_target("a sheet attached to window 42 has focus"))
-					}
-				},
-				|| Ok(()),
-			);
-			(
-				result
-					.map(|proof| proof.is_some())
-					.map_err(|error| error.code.as_str()),
-				steps.into_inner(),
-			)
-		};
+					},
+					|seen| {
+						steps.borrow_mut().push(format!("prove keys {seen:?}"));
+						proven.ok_or_else(|| {
+							DesktopError::invalid_target("a sheet attached to window 42 has focus")
+						})
+					},
+					|| Ok(()),
+				);
+				(
+					result
+						.map(|proof| proof.is_some())
+						.map_err(|error| error.code.as_str()),
+					steps.into_inner(),
+				)
+			};
 		let made = "make key, overlay false".to_string();
 		// A right or middle press without keys needs no key window.
 		assert_eq!(ready(MouseButton::Right, false, false, None, false), (Ok(false), Vec::new()));
@@ -6946,20 +7074,18 @@ mod tests {
 		let downs = std::cell::Cell::new(0);
 		let post = |_: Posted, _, event: &CGEvent| {
 			if event.get_type() as u32 == CGEventType::KeyDown as u32 {
-				downs.set(downs.get() + 1);
+				downs.update(|v| v + 1);
 			}
 			Ok(())
 		};
 		// The user brings the target forward after Space went down.
 		let refused = || {
-			if downs.get() == 0 {
-				Ok(())
-			} else {
-				Err(DesktopError::background_unavailable(
+			(downs.get() == 0).ok_or_else(|| {
+				DesktopError::background_unavailable(
 					"window 42 of TextEdit: it came to the front during background input; nothing was \
 					 sent",
-				))
-			}
+				)
+			})
 		};
 		let guarded = guarded_keys(&post, &refused);
 		let window = background_window("TextEdit");
@@ -7134,7 +7260,7 @@ mod tests {
 		// to 5: carried on, the item would drop wherever the user's pointer is.
 		let checks = std::cell::Cell::new(0);
 		let picked_up = || {
-			checks.set(checks.get() + 1);
+			checks.update(|v| v + 1);
 			checks.get() > 1
 		};
 		let mut posted = Vec::new();
@@ -7163,7 +7289,7 @@ mod tests {
 				7,
 				|| {
 					let count = reads[next.get()];
-					next.set(next.get() + 1);
+					next.update(|v| v + 1);
 					log.borrow_mut().push(format!("read {count}"));
 					count
 				},
