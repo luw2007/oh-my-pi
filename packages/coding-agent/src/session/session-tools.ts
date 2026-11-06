@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Agent, AgentMessage, AgentTool, AgentToolContext } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
-import { resolveDelegationBias } from "@oh-my-pi/pi-catalog/compat/delegation";
+import { type DelegationBias, resolveDelegationBias } from "@oh-my-pi/pi-catalog/compat/delegation";
 import { isRecord, logger, prompt, stringProperty, structuredCloneJSON, untilAborted } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../capability";
 import type { EffectiveExtensionRoots } from "../capability/types";
@@ -68,7 +68,7 @@ import type { SessionEntry } from "./session-entries";
 import type { SessionManager } from "./session-manager";
 
 import { cfgDisabledExtensions, cfgSkills, type SkillsSettings } from "../extensibility/settings";
-import { cfgExternalThinking, cfgIncludeModelInPrompt, cfgInlineToolDescriptors, cfgSkillful } from "./settings";
+import { cfgExternalThinking, cfgInlineToolDescriptors, cfgSkillful } from "./settings";
 import { cfgStartupQuiet } from "../modes/settings";
 import {
 	cfgToolsApproval,
@@ -432,7 +432,7 @@ export class SessionTools {
 	 */
 	#promptSurfaceScope = new AsyncLocalStorage<PromptSurface>();
 	#toolRegistryMutationTail: Promise<void> = Promise.resolve();
-	#promptModelKey: string | undefined;
+	#promptDelegationBias: DelegationBias | undefined;
 	/** Inline-descriptor decision of the model the base prompt was rendered for. */
 	#promptInlineDescriptors: boolean | undefined;
 	#rebuildSystemPrompt: SessionToolsOptions["rebuildSystemPrompt"];
@@ -538,8 +538,7 @@ export class SessionTools {
 		// no tools and the prompt rebuild without `read` empties the skill list.
 		for (const tool of host.agent.state.tools) this.#enabledToolNames.add(tool.name);
 		for (const name of this.#xdev?.mountedNames ?? []) this.#enabledToolNames.add(name);
-		this.#promptModelKey = this.#currentPromptModelKey();
-		this.#promptInlineDescriptors = this.#currentInlineDescriptors();
+		this.#recordPromptPolicy();
 	}
 
 	/** Mutable registry shared with controller hosts that inspect available tools. */
@@ -976,37 +975,27 @@ export class SessionTools {
 		return shouldInlineToolDescriptors(cfgInlineToolDescriptors.get(this.#host.settings), activeModel.id);
 	}
 
-	#currentPromptModelKey(): string | undefined {
+	/** Records the model-dependent policies used by the committed base prompt. */
+	#recordPromptPolicy(): void {
 		const activeModel = this.#host.model();
-		if (!activeModel) return undefined;
-		if (cfgIncludeModelInPrompt.get(this.#host.settings)) return formatModelString(activeModel);
-		// The inline-descriptor decision is per model and selects both the prompt's
-		// tool catalog and provider-side description pruning (see `sdk.ts`).
-		return `delegation-bias:${resolveDelegationBias(activeModel)}|inline-descriptors:${this.#currentInlineDescriptors()}`;
+		this.#promptDelegationBias = activeModel ? resolveDelegationBias(activeModel) : undefined;
+		this.#promptInlineDescriptors = this.#currentInlineDescriptors();
 	}
 
-	/**
-	 * Rebuilds model-dependent tool prompts after a model change.
-	 *
-	 * `retryFallback` marks a hop down the retry fallback chain. It keeps the Model line and the
-	 * Delegation wording the prompt was rendered with: re-rendering them changed the prompt's bytes,
-	 * and the provider then wrote the whole cached conversation again on every hop. It still rebuilds
-	 * when the hop changes what the request must carry for the new model: the edit-mode policy
-	 * (#11983), or the inline-descriptor decision, which also turns provider-side description pruning
-	 * on or off (#14200). The kept key makes a later switch back to the rendered model a no-op, and a
-	 * deliberate switch (`/model`, `setModel`) compares against the model the prompt describes.
-	 */
+	/** Retry fallbacks keep delegation wording cached unless request-shape policies require a rebuild. */
 	async syncAfterModelChange(previousEditMode: EditModeSetting, options?: { retryFallback?: boolean }): Promise<void> {
 		const currentEditMode = this.resolveActiveEditMode();
+		const inlineDescriptorsChanged = this.#currentInlineDescriptors() !== this.#promptInlineDescriptors;
 		if (options?.retryFallback) {
-			const inlineDescriptorsChanged = this.#currentInlineDescriptors() !== this.#promptInlineDescriptors;
-			if (previousEditMode !== currentEditMode || inlineDescriptorsChanged) await this.refreshBaseSystemPrompt();
+			if (previousEditMode !== currentEditMode || inlineDescriptorsChanged) {
+				await this.refreshBaseSystemPrompt();
+			}
 			return;
 		}
+		const activeModel = this.#host.model();
+		const delegationBias = activeModel ? resolveDelegationBias(activeModel) : undefined;
 		const editModeChanged = previousEditMode !== currentEditMode && this.getActiveToolNames().includes("edit");
-		// The system prompt selects model-specific policy even when it does not display the model id.
-		const modelChanged = this.#currentPromptModelKey() !== this.#promptModelKey;
-		if (editModeChanged || modelChanged) {
+		if (editModeChanged || inlineDescriptorsChanged || delegationBias !== this.#promptDelegationBias) {
 			await this.refreshBaseSystemPrompt();
 		}
 	}
@@ -1491,8 +1480,7 @@ export class SessionTools {
 				this.#applyAgentSystemPrompt(this.#baseSystemPrompt);
 				invalidateToolSchemaMetadata(this.#host.agent.state.tools);
 				this.#lastAppliedToolSignature = rebuiltSignature;
-				this.#promptModelKey = this.#currentPromptModelKey();
-				this.#promptInlineDescriptors = this.#currentInlineDescriptors();
+				this.#recordPromptPolicy();
 				this.#setBasePromptXdevNames(rebuiltXdevCatalogNames);
 				// The rebuilt prompt is a fresh roster snapshot. Keep the complete
 				// pending delta for a turn override that hides it, while separately
@@ -2339,8 +2327,7 @@ export class SessionTools {
 				// later frozen changes that must follow a delivered base.
 				this.#basePromptReflectsRosterDelta = true;
 				this.#pendingToolRosterDeltaAfterBase = undefined;
-				this.#promptModelKey = this.#currentPromptModelKey();
-				this.#promptInlineDescriptors = this.#currentInlineDescriptors();
+				this.#recordPromptPolicy();
 				this.#lastAppliedToolSignature = signature;
 				return true;
 			},

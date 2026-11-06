@@ -51,12 +51,7 @@ import { cfgTtsrBuiltinRules, cfgTtsrDisabledRules, cfgTtsrEnabled } from "./exp
 import { cfgTuiAutoGraph, cfgTuiReactions, cfgTuiRenderMermaid, cfgTuiRenderSvg } from "./modes/settings";
 import { cfgSecretsEnabled } from "./secrets/settings";
 import { cfgToolsFormat } from "./session/context-settings";
-import {
-	cfgIncludeModelInPrompt,
-	cfgIncludeWorkspaceTree,
-	cfgInlineToolDescriptors,
-	cfgPersonality,
-} from "./session/settings";
+import { cfgIncludeWorkspaceTree, cfgInlineToolDescriptors, cfgPersonality } from "./session/settings";
 import { cfgTaskBatch, cfgTaskEager } from "./task/settings";
 import {
 	cfgAsyncEnabled,
@@ -75,7 +70,6 @@ import {
  */
 export const cfgSystemPromptInputs = combine({
 	personality: cfgPersonality,
-	includeModelInPrompt: cfgIncludeModelInPrompt,
 	includeWorkspaceTree: cfgIncludeWorkspaceTree,
 	inlineToolDescriptors: cfgInlineToolDescriptors,
 	toolsFormat: cfgToolsFormat,
@@ -584,10 +578,6 @@ export interface BuildSystemPromptOptions {
 	 * keep it; names also set the `browserEnabled`/`computerEnabled` template flags.
 	 */
 	evalPreludes?: readonly Pick<EvalPreludeDefinition, "name" | "guidance">[];
-	/** Active model identifier (e.g. "anthropic/claude-opus-4") surfaced in the workstation block. */
-	model?: string;
-	/** Whether to surface `model` in the workstation block. Default: true. */
-	includeModelInPrompt?: boolean;
 	/** Personality preset rendered into the default system prompt. "none" omits the block. Default: "default" */
 	personality?: Personality;
 	/** Whether to include the workspace directory tree in the system prompt. Default: false */
@@ -690,8 +680,6 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		settingsApproval = false,
 		outReplies = false,
 		evalPreludes = [],
-		model,
-		includeModelInPrompt = true,
 		personality = "default",
 		includeWorkspaceTree = false,
 		renderMermaid = true,
@@ -1012,7 +1000,6 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		alwaysApplyRules: injectedAlwaysApplyRules,
 		cwd: promptCwd,
 		additionalWorkspaceRoots: additionalWorkspaceRoots.filter(d => path.resolve(d) !== path.resolve(resolvedCwd)),
-		model: includeModelInPrompt ? (model ?? "") : "",
 		delegationBias,
 		personality: personalityBlock,
 		intentTracing: !!intentField,

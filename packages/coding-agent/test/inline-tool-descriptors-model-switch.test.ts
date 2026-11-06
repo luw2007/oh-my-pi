@@ -45,42 +45,40 @@ describe("inline tool descriptors across model switches", () => {
 		return { readDescription: read.description, prompt: (context.systemPrompt ?? []).join("\n") };
 	}
 
-	for (const includeModelInPrompt of [true, false]) {
-		it(`re-decides pruning and the prompt catalog per active model (includeModelInPrompt=${includeModelInPrompt})`, async () => {
-			const { session } = await createAgentSession({
-				cwd: dir,
-				agentDir: dir,
-				modelRegistry,
-				sessionManager: SessionManager.inMemory(),
-				settings: Settings.isolated({ inlineToolDescriptors: "auto", includeModelInPrompt }),
-				model: gemini,
-				disableExtensionDiscovery: true,
-				skills: [],
-				contextFiles: [],
-				promptTemplates: [],
-				slashCommands: [],
-				enableMCP: false,
-				enableLsp: false,
-				skipPythonPreflight: true,
-				toolNames: ["read"],
-			});
-			sessions.push(session);
-
-			const onGemini = await providerView(session);
-			expect(onGemini.readDescription).toBe("");
-			expect(onGemini.prompt).toContain("type read = (");
-
-			await session.setModel(glm);
-			const onGlm = await providerView(session);
-			expect(onGlm.readDescription).not.toBe("");
-			expect(onGlm.prompt).not.toContain("type read = (");
-
-			await session.setModel(gemini);
-			const back = await providerView(session);
-			expect(back.readDescription).toBe("");
-			expect(back.prompt).toContain("type read = (");
+	it("re-decides pruning and the prompt catalog per active model", async () => {
+		const { session } = await createAgentSession({
+			cwd: dir,
+			agentDir: dir,
+			modelRegistry,
+			sessionManager: SessionManager.inMemory(),
+			settings: Settings.isolated({ inlineToolDescriptors: "auto" }),
+			model: gemini,
+			disableExtensionDiscovery: true,
+			skills: [],
+			contextFiles: [],
+			promptTemplates: [],
+			slashCommands: [],
+			enableMCP: false,
+			enableLsp: false,
+			skipPythonPreflight: true,
+			toolNames: ["read"],
 		});
-	}
+		sessions.push(session);
+
+		const onGemini = await providerView(session);
+		expect(onGemini.readDescription).toBe("");
+		expect(onGemini.prompt).toContain("type read = (");
+
+		await session.setModel(glm);
+		const onGlm = await providerView(session);
+		expect(onGlm.readDescription).not.toBe("");
+		expect(onGlm.prompt).not.toContain("type read = (");
+
+		await session.setModel(gemini);
+		const back = await providerView(session);
+		expect(back.readDescription).toBe("");
+		expect(back.prompt).toContain("type read = (");
+	});
 	for (const systemPrompt of ["Fixed agent instructions.", ["Fixed agent instructions."]]) {
 		it(`restores required descriptions after switching with a fixed ${typeof systemPrompt === "string" ? "string" : "array"} prompt`, async () => {
 			const { session } = await createAgentSession({

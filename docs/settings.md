@@ -463,9 +463,10 @@ Existing configs are migrated automatically when loaded. Retired backend selecto
 | `enabledModels`        | array   | `[]`                        | Allow-list of models; supports [path-scoped entries](#path-scoped-arrays). Empty means all available models.                                                                                                                                                                                                                                            |
 | `enabledProviders`     | array   | `[]`                        | Foreign user-level discovery sources to load; supports path-scoped entries. See [above](#provider-and-source-disabling).                                                                                                                                                                                                                                |
 | `disabledProviders`    | array   | `[]`                        | Disabled model/discovery providers; supports [path-scoped entries](#path-scoped-arrays). See [above](#provider-and-source-disabling).                                                                                                                                                                                                                   |
-| `includeModelInPrompt` | boolean | `true`                      | Include the active model name in the system prompt.                                                                                                                                                                                                                                                                                                     |
 
 See [Models](./models.md) for the `models.yml` schema and custom-provider definitions.
+
+The system prompt does not include the active model identifier. Switching models or compacting history does not change it solely to name a different model; model-dependent tool and delegation policies still apply.
 
 ### Judgments
 

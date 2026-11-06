@@ -13,6 +13,7 @@
 - Live and restored Magpie response stats display the gateway's actual served model instead of its requested group route, without appending a requested effort that the router may not have used.
 - Merged upstream compact wait-poll cards: collapsed waiting polls render the aggregate `waiting on N jobs` header instead of per-job rows, and a demoted usage footer keeps its activity line while hiding its metrics; poll displacement tests assert the retained-history contract rather than the exact card copy.
 - Legacy Pi extensions calling `ctx.modelRegistry.complete()` (e.g. `pi-intercom` handover) now run instead of failing with `ctx.modelRegistry.complete is not a function`.
+- System prompts no longer expose the active model identifier or change solely because the model switches; removed the `includeModelInPrompt` setting.
 ### Added
 
 - Added `skills.manualSkills` glob patterns to keep skills available manually while hiding them from the model catalog, without editing their `SKILL.md` files ([#18114](https://github.com/can1357/oh-my-pi/pull/18114) by [@Shadorain](https://github.com/Shadorain))

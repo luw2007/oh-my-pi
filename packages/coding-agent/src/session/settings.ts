@@ -409,18 +409,6 @@ export const cfgInlineToolDescriptors = register({
 	},
 });
 
-export const cfgIncludeModelInPrompt = register({
-	id: "includeModelInPrompt",
-	type: "boolean",
-	default: true,
-	ui: {
-		tab: "model",
-		group: "Prompt",
-		label: "Include Model in Prompt",
-		description: "Surface the active model identifier in the system prompt so the agent knows which model it is",
-	},
-});
-
 export const cfgIncludeWorkspaceTree = register({
 	id: "includeWorkspaceTree",
 	type: "boolean",

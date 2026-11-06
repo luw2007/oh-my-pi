@@ -1,7 +1,6 @@
 <project-context>
 <workstation>
 {{#list environment prefix="- " join="\n"}}{{label}}: {{value}}{{/list}}
-{{#if model}}- Model: {{model}}{{/if}}
 </workstation>
 
 {{#if contextFiles.length}}

@@ -31,7 +31,6 @@ async function promptWithSecurity(securityEnabled: boolean): Promise<string> {
 		},
 		activeRepoContext: null,
 		securityEnabled,
-		includeModelInPrompt: false,
 	});
 	return systemPrompt.join("\n");
 }
