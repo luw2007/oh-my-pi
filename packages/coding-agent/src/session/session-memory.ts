@@ -51,7 +51,7 @@ export interface SessionMemoryHost {
 	getMnemopiSessionState(): MnemopiSessionState | undefined;
 	takeMnemopiSessionState(): MnemopiSessionState | undefined;
 	setBaseSystemPrompt(prompt: string[]): void;
-	refreshBaseSystemPrompt(): Promise<void>;
+	refreshBaseSystemPrompt(options?: { deferWhileStreaming?: boolean }): Promise<void>;
 	replaceMemoryTools(tools: AgentTool[]): Promise<void>;
 }
 
@@ -236,7 +236,7 @@ export class SessionMemory {
 			this.#baseSystemPromptBeforeMemoryPromotion = undefined;
 		}
 		if (resetHindsight || resetMnemopi || hadPromotedMemoryPrompt) {
-			await this.#host.refreshBaseSystemPrompt();
+			await this.#host.refreshBaseSystemPrompt({ deferWhileStreaming: true });
 		}
 	}
 
@@ -343,7 +343,7 @@ export class SessionMemory {
 			if (this.#host.isDisposed()) return;
 			await this.#refreshMemoryTools();
 			if (this.#host.isDisposed()) return;
-			await this.#host.refreshBaseSystemPrompt();
+			await this.#host.refreshBaseSystemPrompt({ deferWhileStreaming: true });
 		} catch (error) {
 			await this.#disposeMemoryBackendState(false);
 			if (!this.#host.isDisposed()) {

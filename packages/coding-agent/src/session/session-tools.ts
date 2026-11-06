@@ -435,6 +435,13 @@ export class SessionTools {
 	#promptDelegationBias: DelegationBias | undefined;
 	/** Inline-descriptor decision of the model the base prompt was rendered for. */
 	#promptInlineDescriptors: boolean | undefined;
+	/**
+	 * Tool set and prompt rebuild staged while a turn streams. Applying them mid-run
+	 * rewrites the wire prefix of every remaining request in that run — tools sit first
+	 * and the prompt renders the tool roster — so they wait for the next turn start.
+	 */
+	#pendingToolNames: string[] | undefined;
+	#pendingPromptRefresh = false;
 	#rebuildSystemPrompt: SessionToolsOptions["rebuildSystemPrompt"];
 	#getMcpServerInstructions: SessionToolsOptions["getMcpServerInstructions"];
 	/**
@@ -606,7 +613,7 @@ export class SessionTools {
 		if (this.#host.agentKind() === "main") {
 			setActiveSkills(this.#skills);
 		}
-		await this.refreshBaseSystemPrompt();
+		await this.refreshBaseSystemPrompt(undefined, { deferWhileStreaming: true });
 		this.#host.notifyCommandMetadataChanged();
 	}
 
@@ -1262,16 +1269,30 @@ export class SessionTools {
 	}
 
 	/** Applies an enabled tool set and reconciles its `xd://` partition. */
-	applyActiveToolsByName(toolNames: string[], forcePromptRefresh = false, signal?: AbortSignal): Promise<void> {
+	applyActiveToolsByName(
+		toolNames: string[],
+		forcePromptRefresh = false,
+		signal?: AbortSignal,
+		options?: { deferWhileStreaming?: boolean },
+	): Promise<void> {
 		return this.runToolRegistryMutation(
-			() => this.#applyActiveToolsByName(toolNames, forcePromptRefresh, signal),
+			() => this.#applyActiveToolsByName(toolNames, forcePromptRefresh, signal, options),
 			signal,
 		);
 	}
 
-	async #applyActiveToolsByName(toolNames: string[], forcePromptRefresh = false, signal?: AbortSignal): Promise<void> {
+	async #applyActiveToolsByName(
+		toolNames: string[],
+		forcePromptRefresh = false,
+		signal?: AbortSignal,
+		options?: { deferWhileStreaming?: boolean },
+	): Promise<void> {
 		signal?.throwIfAborted();
 		toolNames = normalizeToolNames(toolNames);
+		if (options?.deferWhileStreaming && this.#host.isStreaming()) {
+			this.#pendingToolNames = toolNames;
+			return;
+		}
 		let builtInWriteAvailable = this.#builtInToolNames.has("write");
 		const fullWriteSelected =
 			toolNames.includes("write") &&
@@ -2185,7 +2206,9 @@ export class SessionTools {
 				this.#builtInToolNames.add(wrapped.name);
 				nextActive.push(wrapped.name);
 			}
-			await this.#applyActiveToolsByName([...new Set(nextActive)]);
+			await this.#applyActiveToolsByName([...new Set(nextActive)], false, undefined, {
+				deferWhileStreaming: true,
+			});
 		});
 	}
 
@@ -2255,7 +2278,7 @@ export class SessionTools {
 				if (delta.xdev) delta.xdev.decorateExecution = tool => this.#wrapToolForAcpPermission(tool);
 			}
 			if (!refreshPrompt && !xdevChanged && delta.added.length === 0 && delta.removed.length === 0) return;
-			await this.#applyActiveToolsByName([...enabled], true);
+			await this.#applyActiveToolsByName([...enabled], true, undefined, { deferWhileStreaming: true });
 		});
 	}
 
@@ -2264,10 +2287,31 @@ export class SessionTools {
 	 * `commitIf` lets asynchronous producers discard a stale rebuild atomically
 	 * after its inputs have been superseded.
 	 */
-	refreshBaseSystemPrompt(commitIf?: () => boolean): Promise<void> {
+	refreshBaseSystemPrompt(commitIf?: () => boolean, options?: { deferWhileStreaming?: boolean }): Promise<void> {
+		if (options?.deferWhileStreaming && this.#host.isStreaming()) {
+			this.#pendingPromptRefresh = true;
+			return Promise.resolve();
+		}
 		return this.runToolRegistryMutation(async () => {
 			const prepared = await this.#prepareBaseSystemPrompt();
 			if (commitIf && !commitIf()) return;
+			prepared?.commit?.();
+		});
+	}
+
+	/** Applies the tool set and prompt rebuild staged while the previous turn streamed. */
+	async flushDeferredPromptWork(): Promise<void> {
+		const pendingTools = this.#pendingToolNames;
+		if (pendingTools === undefined && !this.#pendingPromptRefresh) return;
+		this.#pendingToolNames = undefined;
+		this.#pendingPromptRefresh = false;
+		await this.runToolRegistryMutation(async () => {
+			if (pendingTools !== undefined) {
+				// Forces the rebuild, so a staged tool set never desyncs the roster text.
+				await this.#applyActiveToolsByName(pendingTools, true);
+				return;
+			}
+			const prepared = await this.#prepareBaseSystemPrompt();
 			prepared?.commit?.();
 		});
 	}
@@ -2551,7 +2595,7 @@ export class SessionTools {
 			]),
 		];
 		try {
-			await this.#applyActiveToolsByName(nextActive);
+			await this.#applyActiveToolsByName(nextActive, false, undefined, { deferWhileStreaming: true });
 			if (this.#host.isDisposed()) {
 				restorePreviousMcpTools();
 			} else {

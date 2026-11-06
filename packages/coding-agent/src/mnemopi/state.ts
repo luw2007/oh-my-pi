@@ -950,7 +950,7 @@ export class MnemopiSessionState implements MnemopiSessionStateApi {
 		if (!this.#commitRecall(generation, context ?? "", record)) return;
 		if (!context) return;
 		try {
-			await this.session.refreshBaseSystemPrompt();
+			await this.session.refreshBaseSystemPrompt(undefined, { deferWhileStreaming: true });
 		} catch (error) {
 			if (this.config.debug) logger.debug("Mnemopi: prompt refresh after recall failed", { error: String(error) });
 		}

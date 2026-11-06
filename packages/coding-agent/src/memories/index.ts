@@ -368,7 +368,7 @@ async function runMemoryStartup(options: MemoryStartupOptions): Promise<void> {
 	);
 	if (!isMemoryStartupActive(options)) return;
 	if (memoryConversationStarted(options.session)) return;
-	await options.session.refreshBaseSystemPrompt?.();
+	await options.session.refreshBaseSystemPrompt?.(undefined, { deferWhileStreaming: true });
 }
 
 async function runPhase1(options: MemoryStartupOptions): Promise<void> {

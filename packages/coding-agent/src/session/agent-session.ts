@@ -7521,8 +7521,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	}
 
 	/** Rebuilds the stable base prompt, optionally discarding a stale asynchronous rebuild. */
-	refreshBaseSystemPrompt(commitIf?: () => boolean): Promise<void> {
-		return this.#tools.refreshBaseSystemPrompt(commitIf);
+	refreshBaseSystemPrompt(commitIf?: () => boolean, options?: { deferWhileStreaming?: boolean }): Promise<void> {
+		return this.#tools.refreshBaseSystemPrompt(commitIf, options);
 	}
 
 	/** Replaces connected MCP tools and enables them immediately. */
@@ -8437,6 +8437,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		this.#noteUserTurn();
 		this.#todo.resetCycle();
 		this.#resetPromptMaintenanceState();
+		// Tool/prompt changes staged while the previous turn streamed land before
+		// this run snapshots its request context.
+		await this.#tools.flushDeferredPromptWork();
 		this.#scheduleAgentContinue({ source: "manual-continue", turnRecords: [prompt] });
 	}
 
@@ -9151,6 +9154,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 			this.#todo.resetCycle();
 			this.#resetPromptMaintenanceState();
+			// Tool/prompt changes staged while the previous turn streamed land before
+			// this run snapshots its request context.
+			await this.#tools.flushDeferredPromptWork();
 			this.#recovery.setAcceptTerminalEmptyStop(options?.acceptTerminalEmptyStop === true);
 
 			// Validate model
@@ -10273,6 +10279,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			const acceptTerminalEmptyStop = options?.acceptTerminalEmptyStop === true;
 			if (acceptTerminalEmptyStop) {
 				this.#resetPromptMaintenanceState();
+				// Tool/prompt changes staged while the previous turn streamed land before
+				// this run snapshots its request context.
+				await this.#tools.flushDeferredPromptWork();
 			}
 			this.#recovery.setAcceptTerminalEmptyStop(acceptTerminalEmptyStop);
 			const run = this.agent.prompt(message);

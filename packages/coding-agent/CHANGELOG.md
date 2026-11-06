@@ -70,6 +70,7 @@
 
 ### Changed
 
+- Tool-set, learned-skill and memory-prompt changes that arrive while a turn is streaming now take effect at the next turn instead of mid-turn, so the running turn keeps byte-identical requests and its prompt cache
 - Local Whisper speech-to-text and the local tiny model install their Transformers.js runtime on first use instead of with omp, so installs are smaller; first use needs network access
 - Local Parakeet and Nemotron speech runtimes now install on first use in source and npm installs too, reducing initial install size; first use needs network access
 - `wait` with nothing new now returns after 5s instead of blocking up to 30 minutes, the window growing 5s → 10s → 30s → 1m → 5m across back-to-back waits (5s again after news or a minute away); from the second idle wait on it tells the agent to get on with work that does not need the result instead of waiting

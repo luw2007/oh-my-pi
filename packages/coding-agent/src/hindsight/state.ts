@@ -739,7 +739,7 @@ export class HindsightSessionState implements HindsightSessionStateApi {
 		commitIf?: () => boolean,
 	): Promise<boolean> {
 		try {
-			await this.session.refreshBaseSystemPrompt(commitIf);
+			await this.session.refreshBaseSystemPrompt(commitIf, { deferWhileStreaming: true });
 			return !commitIf || commitIf();
 		} catch (err) {
 			logger.debug(`Hindsight: refreshBaseSystemPrompt after ${reason} failed`, { error: String(err) });
