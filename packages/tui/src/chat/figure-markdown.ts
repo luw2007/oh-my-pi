@@ -1,6 +1,6 @@
 import type { Tokens } from "@oh-my-pi/pi-utils/marked";
 import type { ImageBudget } from "../components/image";
-import { type Markdown, streamingMarkdownSource } from "../components/markdown";
+import { type Markdown, streamingMarkdownSource, type TableLocks } from "../components/markdown";
 import { Spacer } from "../components/spacer";
 import { Container } from "../tui";
 import { SvgFigure, svgFigureRendering } from "./svg-figure";
@@ -10,6 +10,11 @@ import { type ChartSegment, hasChartTable, splitTableCharts, TableChartFigure } 
 export interface FigureMarkdownOptions {
 	/** Markdown for one prose run (and a failed figure's code fallback); FigureMarkdown drives its transience. */
 	markdown: (text: string) => Markdown;
+	/**
+	 * Table locks for the leading prose run (see {@link Markdown.tableLocks}),
+	 * the only run a transcript publishes stable rows from.
+	 */
+	tableLocks?: TableLocks;
 	/** Draw charts under numeric tables; off for transcripts that are not the main session's. */
 	charts: boolean;
 	/** Shared inline-image budget for the figures. */
@@ -92,6 +97,23 @@ export class FigureMarkdown extends Container {
 		return streamingMarkdownSource(first.text);
 	}
 
+	/** Whether {@link leadingProse} ends inside a locked table that is still streaming. */
+	get leadingProseEndsInOpenTable(): boolean {
+		const first = this.#parts[0];
+		return (
+			first?.kind === "markdown" &&
+			this.#transient &&
+			this.#parts.length === 1 &&
+			first.md.lastRenderStableTextEndsInOpenTable()
+		);
+	}
+
+	/** Lock a table streaming at the tail of the leading prose; see {@link Markdown.lockOpenTable}. */
+	lockOpenTable(): boolean {
+		const first = this.#parts[0];
+		return first?.kind === "markdown" && this.#transient && this.#parts.length === 1 && first.md.lockOpenTable();
+	}
+
 	/** Whether a figure's final source still waits for its raster, or a chart for its pick or raster. */
 	get pending(): boolean {
 		return this.#parts.some(part => part.kind !== "markdown" && part.figure.pending);
@@ -99,14 +121,18 @@ export class FigureMarkdown extends Container {
 
 	/** Rebuild the prose runs through the Markdown factory after its theme changed; figures keep their rasters. */
 	restyle(): void {
-		this.#parts = this.#parts.map(part => {
-			if (part.kind !== "markdown") return part;
-			const md = this.#options.markdown(part.text);
-			md.setExpanded(this.#expanded);
-			return { kind: "markdown", md, text: part.text };
-		});
+		this.#parts = this.#parts.map((part, index) =>
+			part.kind === "markdown" ? { kind: "markdown", md: this.#proseRun(part.text, index), text: part.text } : part,
+		);
 		this.#mount();
 		this.#syncTails();
+	}
+
+	#proseRun(text: string, index: number): Markdown {
+		const md = this.#options.markdown(text);
+		md.setExpanded(this.#expanded);
+		if (index === 0) md.tableLocks = this.#options.tableLocks;
+		return md;
 	}
 
 	#reconcile(): void {
@@ -132,9 +158,7 @@ export class FigureMarkdown extends Container {
 					return old;
 				}
 				reshaped = true;
-				const md = this.#options.markdown(text);
-				md.setExpanded(this.#expanded);
-				return { kind: "markdown", md, text };
+				return { kind: "markdown", md: this.#proseRun(text, index), text };
 			}
 			if (old?.kind === "svg") {
 				old.source = segment.source;

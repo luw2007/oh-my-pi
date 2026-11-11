@@ -47,7 +47,6 @@ import {
 import type * as JsProcessEntry from "./eval/js/process-entry";
 import type { WorkerInbound as JsWorkerInbound, WorkerOutbound as JsWorkerOutbound } from "./eval/js/worker-protocol";
 import { startParentWatchdog } from "./subprocess/parent-watchdog";
-import { recordStartupNativeModules } from "./thread/code-skew";
 
 if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
 	process.stderr.write(
@@ -548,7 +547,6 @@ export async function runCli(argv: string[]): Promise<void> {
 	// `ensureSqliteLockShim`); this module stays free of pi-utils' env snapshot.
 	if (isProcessEntry && !helpOrVersion) {
 		installSqliteLockShim();
-		recordStartupNativeModules();
 	}
 	let stopStartupComposer: (() => void) | undefined;
 	if (

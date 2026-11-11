@@ -238,11 +238,11 @@ describe("model-independent session prompts", () => {
 	it("updates delegation policy on a model switch to match a fresh session for that model", async () => {
 		const registry = new ModelRegistry(authStorage, path.join(tempDir, "models.yml"));
 		const models = registry.getAll();
-		const eager = models.find(model => resolveDelegationBias(model) === "eager")!;
+		const gated = models.find(model => resolveDelegationBias(model) === "gated")!;
 		const restrained = models.find(model => resolveDelegationBias(model) === "restrained")!;
-		authStorage.keys.setRuntime(eager.provider, "test-key");
+		authStorage.keys.setRuntime(gated.provider, "test-key");
 		authStorage.keys.setRuntime(restrained.provider, "test-key");
-		const session = await createSession(registry, eager, ["task"]);
+		const session = await createSession(registry, gated, ["task"]);
 		const fresh = await createSession(registry, restrained, ["task"]);
 		expect(session.agent.state.systemPrompt).not.toEqual(fresh.agent.state.systemPrompt);
 		await session.setModel(restrained);

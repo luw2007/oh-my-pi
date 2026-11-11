@@ -52,7 +52,7 @@ import { cfgTuiAutoGraph, cfgTuiReactions, cfgTuiRenderMermaid, cfgTuiRenderSvg 
 import { cfgSecretsEnabled } from "./secrets/settings";
 import { cfgToolsFormat } from "./session/context-settings";
 import { cfgIncludeWorkspaceTree, cfgInlineToolDescriptors, cfgPersonality } from "./session/settings";
-import { cfgTaskBatch, cfgTaskEager } from "./task/settings";
+import { cfgOvnfsPath, cfgTaskBatch, cfgTaskEager } from "./task/settings";
 import {
 	cfgAsyncEnabled,
 	cfgOutEnabled,
@@ -89,6 +89,8 @@ export const cfgSystemPromptInputs = combine({
 	evalAutoBackground: cfgEvalAutoBackgroundEnabled,
 	taskEager: cfgTaskEager,
 	taskBatch: cfgTaskBatch,
+	// Separate-checkout guidance names the ovnfs command.
+	ovnfsPath: cfgOvnfsPath,
 	// Rule bucketing (TTSR registrations, rulebook, always-apply) runs at rebuild time.
 	ttsrEnabled: cfgTtsrEnabled,
 	ttsrBuiltinRules: cfgTtsrBuiltinRules,
@@ -555,7 +557,7 @@ export interface BuildSystemPromptOptions {
 	taskIrcEnabled?: boolean;
 	/** Whether the read-only `scout` subagent is spawnable (not disabled, allowed by spawn policy). Defaults to true. */
 	scoutAvailable?: boolean;
-	/** Active model's delegation appetite (catalog `delegation-bias` axis); selects the Delegation section's wording. Default: `eager`. */
+	/** Active model's delegation appetite (catalog `delegation-bias` axis); selects the Delegation section's wording. Default: `balanced`. */
 	delegationBias?: DelegationBias;
 
 	/** Rules with alwaysApply=true — their full content is injected into the prompt. */
@@ -598,6 +600,8 @@ export interface BuildSystemPromptOptions {
 	xdevDocs?: string;
 	/** Whether Auto-QA grievance reporting is enabled; renders the `xd://report_issue` note. */
 	autoQaEnabled?: boolean;
+	/** ovnfs command when its binary is found (`ovnfsCommand`); renders the separate-checkout guidance. */
+	ovnfs?: string;
 	/** Whether active `write` is restricted to xd:// dispatch and the plan artifact sandbox. */
 	writeTransportOnly?: boolean;
 	/**
@@ -674,7 +678,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		secretsEnabled = false,
 		workspaceTree: providedWorkspaceTree,
 		scoutAvailable = true,
-		delegationBias = "eager",
+		delegationBias = "balanced",
 		memoryBackend,
 		securityEnabled = false,
 		settingsApproval = false,
@@ -689,6 +693,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		xdevTools = [],
 		xdevDocs = "",
 		autoQaEnabled = false,
+		ovnfs,
 		writeTransportOnly = false,
 		subagent = false,
 		activeRepoContext: providedActiveRepoContext,
@@ -1000,15 +1005,14 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		alwaysApplyRules: injectedAlwaysApplyRules,
 		cwd: promptCwd,
 		additionalWorkspaceRoots: additionalWorkspaceRoots.filter(d => path.resolve(d) !== path.resolve(resolvedCwd)),
-		delegationBias,
+		// An explicit eager-tasks mode lifts balanced/restrained wording to eager; gated has its own eager-tasks text.
+		delegationTier: eagerTasks && delegationBias !== "gated" ? "eager" : delegationBias,
 		personality: personalityBlock,
 		intentTracing: !!intentField,
 		intentField: intentField ?? "",
 		intentGuidance: $env.PI_INTENT_PROMPT || intentGuidance || "",
 		eagerTasks,
 		eagerTasksAlways,
-		// Restrained bias yields to an explicit eager-tasks mode.
-		inlineFirstDelegation: delegationBias === "restrained" && !eagerTasks,
 		taskBatch,
 		MAX_CONCURRENCY: normalizeConcurrencyLimit(taskMaxConcurrency),
 		scoutAvailable,
@@ -1025,6 +1029,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		hasDynamicXdevTools: xdevTools.some(mounted => mounted.dynamic === true),
 		xdevDocs,
 		autoQaEnabled,
+		ovnfs,
 		writeTransportOnly,
 		subagent,
 	};
