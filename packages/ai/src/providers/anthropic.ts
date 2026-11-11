@@ -211,6 +211,7 @@ import {
 	isAnthropicFastModeFallbackDisabled,
 	normalizeAnthropicBaseUrl,
 } from "./anthropic-state";
+import { applyHeadCaching } from "./anthropic-head-caching";
 
 export {
 	applyClaudeToolPrefix,
@@ -4507,106 +4508,7 @@ function applyPromptCaching(params: MessageCreateParamsStreaming, cacheControl?:
 	}
 }
 
-/**
- * System-prompt segments whose bytes differ between sessions or turns of the
- * same agent: per-turn memory recall (`<memories>`) and the coding agent's
- * working-directory context (`<project-context>`: context files with their
- * paths, workspace tree, workspace roots, session append text; advisors use
- * the same tag for their context-file block). The coding agent renders them
- * as their own `systemPrompt` array elements after the large static prompt.
- * The system cache breakpoint anchors on the block right before the first
- * such segment, so the static head is shared byte-for-byte across sessions in
- * different directories (e.g. one git worktree per task) and a recall refresh
- * re-bills only the suffix and the message tail.
- *
- * Everything from the first volatile segment on sits after the head
- * breakpoint, including stable blocks appended behind it (per-spawn subagent
- * role text, `before_agent_start` extension policy): prefix caching is
- * positional, so bytes after a changing segment can never extend the cached
- * head anyway; the rolling message breakpoints still cover them.
- *
- * Detection is by our own markup, not model identity: only a leading tag
- * counts, so stable segments quoting these tags elsewhere are unaffected.
- */
-const VOLATILE_SYSTEM_SEGMENT_MARKERS = ["<memories>", "<project-context>"];
 
-function volatileSystemSuffixStart(systemBlocks: readonly AnthropicSystemBlock[]): number {
-	const start = systemBlocks.findIndex(block =>
-		VOLATILE_SYSTEM_SEGMENT_MARKERS.some(marker => block.text.startsWith(marker)),
-	);
-	return start === -1 ? systemBlocks.length : start;
-}
-
-/**
- * Anchor cache_control on the stable request head — the last (non-deferred)
- * tool definition and the last stable system block. The canonical cache order is
- * tools → system → messages, so a breakpoint on the final stable system block caches
- * the entire tools+stable-system prefix, and the extra tool breakpoint keeps the tool
- * definitions cached even when the system text changes. This guarantees the
- * large, unchanging head is a cache hit on every turn regardless of how the
- * message tail churns — the breakpoint placement first-party Anthropic clients
- * (Claude Code, Pi) use. Without it, the general API-key path anchors only the
- * moving message tail, so tail churn re-writes the whole head uncached.
- *
- * Volatile segments (memory recall, working-directory context) sit after the
- * breakpoint, so a recall refresh or a different cwd re-bills only the suffix
- * and the tail instead of the whole head. When every system block is volatile
- * there is no stable boundary and the breakpoint stays on the array tail.
- *
- * Anthropic allows at most 4 cache breakpoints per request. At most one is
- * spent on tools and one on system here, leaving the remaining budget for
- * the message tail and historical decimation checkpoints in `applyPromptCaching`.
- *
- * The tool array is anchored on both API-key and OAuth paths: the tool definitions
- * sit first in wire order and survive message rewrites, and sibling subagents of
- * the same definition share this prefix byte for byte.
- *
- * The OAuth Claude Code path pre-decorates its identity system block in
- * buildAnthropicSystemBlocks. That breakpoint moves to the anchor block instead
- * of a second one being added: the identity block is a prefix of the anchored
- * head, so the move keeps the budget at last tool + last stable system block +
- * 2 message breakpoints while the agent's static system prompt, not just the
- * identity line, becomes a cached prefix of its own.
- *
- * Runs on the fresh system blocks and wire tools built for this request, after
- * the declared tool list was derived from the transcript's request controls.
- */
-function applyHeadCaching(
-	systemBlocks: AnthropicSystemBlock[] | undefined,
-	tools: AnthropicWireTool[] | undefined,
-	cacheControl?: AnthropicCacheControl,
-): void {
-	if (!cacheControl) return;
-
-	if (tools && tools.length > 0 && !tools.some(tool => tool.cache_control != null)) {
-		// Deferred tools are not part of the checked prefix until referenced, so
-		// anchor the last tool that actually sits in the stable prefix.
-		for (let index = tools.length - 1; index >= 0; index--) {
-			const tool = tools[index];
-			if (!tool || tool.defer_loading) continue;
-			tool.cache_control = cloneAnthropicCacheControl(cacheControl);
-			break;
-		}
-	}
-
-	if (systemBlocks && systemBlocks.length > 0) {
-		// Anchor on the last block before the volatile suffix so a recall
-		// refresh or a different working directory re-bills only the suffix,
-		// not the whole head. An earlier system breakpoint (the OAuth identity
-		// block) moves to the anchor rather than staying as a second one: a
-		// breakpoint left on the identity block caches only tools + identity,
-		// and keeping both would take a rolling message breakpoint from
-		// `applyPromptCaching` (4 minus head breakpoints). All-volatile falls
-		// back to tail anchoring.
-		const suffixStart = volatileSystemSuffixStart(systemBlocks);
-		const anchorIndex = suffixStart === 0 ? systemBlocks.length - 1 : suffixStart - 1;
-		const anchor = systemBlocks[anchorIndex];
-		if (anchor && anchor.cache_control == null) {
-			for (const block of systemBlocks) delete block.cache_control;
-			anchor.cache_control = cloneAnthropicCacheControl(cacheControl);
-		}
-	}
-}
 
 function usesAdaptiveThinkingTagOnly(model: Model<"anthropic-messages">): boolean {
 	const thinking = model.thinking;
@@ -5428,7 +5330,7 @@ function buildParams(
 
 	// Anchor the stable tools+system head so it stays cached across turns; the
 	// moving message tail is anchored separately in applyPromptCaching below.
-	applyHeadCaching(systemBlocks, tools, cacheControl);
+	applyHeadCaching(systemBlocks, tools, cacheControl, wireMessages.length);
 	const requestControls: AnthropicRequestControls | undefined =
 		toolPlan.record || effortPlan.record
 			? {

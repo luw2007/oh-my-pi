@@ -5,6 +5,7 @@
 ### Fixed
 
 - OpenAI Completions, OpenAI Responses, and Anthropic streams retain Magpie's canonical `X-Magpie-Model` and `X-Magpie-Provider` response headers as upstream metadata without changing the requested routing identity.
+- Anthropic requests that carry a single message now also anchor the prompt cache on the working-directory footer, so a new session or the first request after compaction reads `<project-context>` instead of writing it again.
 ### Added
 
 - Added opt-in standard Responses WebSockets for catalog-supported models, with incremental turns and session-scoped HTTP/SSE fallback; OMP enables them through settings ([#17354](https://github.com/can1357/oh-my-pi/pull/17354) by [@TatsukiMeng](https://github.com/TatsukiMeng))

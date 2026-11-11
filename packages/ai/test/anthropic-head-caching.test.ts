@@ -176,6 +176,43 @@ describe("anthropic head caching (general API-key path)", () => {
 		expect(typeof earlier === "string" ? undefined : earlier.cache_control).toBeUndefined();
 	});
 
+	it("anchors the volatile footer end when the request carries a single message", async () => {
+		const body = await captureWireBody(undefined, {
+			...CONTEXT,
+			systemPrompt: ["You are a precise assistant.", "<project-context>\n- OS: linux\n</project-context>"],
+			messages: [{ role: "user", content: "hello", timestamp: 1 }],
+		});
+		const system = textSystemBlocks(body);
+		if (system.length < 2) throw new Error("expected a stable block plus a volatile footer");
+
+		// The stable head keeps its anchor so cross-session heads still share a prefix.
+		expect(system[0]?.cache_control?.type).toBe("ephemeral");
+		// The footer end is anchored too: the next session/compaction lineage reads it.
+		expect(system[system.length - 1]?.cache_control?.type).toBe("ephemeral");
+		// One message still takes the remaining slot, and the total stays in budget.
+		expect(findCachedMessageIndices(body)).toHaveLength(1);
+		expect(countCacheBreakpoints(body)).toBeLessThanOrEqual(4);
+	});
+
+	it("leaves the footer unanchored when the request carries more than one message", async () => {
+		const body = await captureWireBody(undefined, {
+			...CONTEXT,
+			systemPrompt: ["You are a precise assistant.", "<project-context>\n- OS: linux\n</project-context>"],
+			messages: [
+				{ role: "user", content: "hello", timestamp: 1 },
+				assistantMessage("hi", 2),
+				{ role: "user", content: "again", timestamp: 3 },
+			],
+		});
+		const system = textSystemBlocks(body);
+		if (system.length < 2) throw new Error("expected a stable block plus a volatile footer");
+
+		expect(system[0]?.cache_control?.type).toBe("ephemeral");
+		// The rolling tail entry already covers the footer on this lineage.
+		expect(system[system.length - 1]?.cache_control).toBeUndefined();
+		expect(countCacheBreakpoints(body)).toBeLessThanOrEqual(4);
+	});
+
 	it("anchors cache_control on the last tool definition", async () => {
 		const body = await captureWireBody();
 		const tools = body.tools ?? [];
