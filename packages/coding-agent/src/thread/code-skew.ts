@@ -8,14 +8,19 @@
  * protocol itself, and cross-thread calls fail in arbitrary ways. A worker
  * therefore reports the modules it loaded whose files changed after the main
  * thread started; main keeps the ones it loaded too and, when any remain,
- * refuses that worker (see `SubagentWorker`). Compiled binaries load embedded
- * modules that cannot change, so their paths never stat and never count.
- * Native addons (`.node`) never count either: the dynamic loader maps one image
- * per path per process, so a worker's `require` of an addon reuses the image
- * main already loaded even when the file on disk was replaced. That includes
- * the addon a compiled binary extracts to the natives dir after it started.
+ * refuses that worker (see `SubagentWorker`). Compiled JavaScript modules have
+ * no on-disk path; extracted native addons are tracked from their initial load.
  */
 import * as fs from "node:fs";
+
+const startupNativeMtimes = new Map<string, number>();
+
+/** Record native addons loaded during CLI bootstrap after extraction completes. */
+export function recordStartupNativeModules(): void {
+	for (const modulePath in require.cache) {
+		if (modulePath.endsWith(".node")) startupNativeMtimes.set(modulePath, fs.statSync(modulePath).mtimeMs);
+	}
+}
 
 /** A worker refused because its code differs from the main thread's; subagents run on the main thread instead. */
 export class SubagentCodeChangedError extends Error {
@@ -27,11 +32,10 @@ export class SubagentCodeChangedError extends Error {
 	}
 }
 
-/** Files of the JS modules this thread loaded that were modified after `sinceMs` (epoch ms). */
+/** Files of the modules this thread loaded that were modified after `sinceMs` (epoch ms). */
 export function loadedModulesChangedSince(sinceMs: number): string[] {
 	const changed: string[] = [];
 	for (const modulePath in require.cache) {
-		if (modulePath.endsWith(".node")) continue;
 		let mtimeMs: number;
 		try {
 			mtimeMs = fs.statSync(modulePath).mtimeMs;
@@ -44,7 +48,16 @@ export function loadedModulesChangedSince(sinceMs: number): string[] {
 	return changed;
 }
 
-/** The first of `paths` (a worker's changed modules) that this thread loaded as well. */
+/** The first changed module shared with main, excluding an unchanged bootstrap addon. */
 export function firstSharedModule(paths: readonly string[]): string | undefined {
-	return paths.find(modulePath => Object.hasOwn(require.cache, modulePath));
+	return paths.find(modulePath => {
+		if (!Object.hasOwn(require.cache, modulePath)) return false;
+		const startupMtime = startupNativeMtimes.get(modulePath);
+		if (startupMtime === undefined) return true;
+		try {
+			return fs.statSync(modulePath).mtimeMs !== startupMtime;
+		} catch {
+			return true;
+		}
+	});
 }

@@ -30,10 +30,8 @@ import {
 
 import { declareWorkerHostEntry, installWorkerInbox, isWorkerHostSelector } from "@oh-my-pi/pi-utils/worker-host";
 import { installSqliteLockShim } from "@oh-my-pi/pi-natives/sqlite-locks";
-import { isNativeShell, runNativeShell } from "./cli/native-shell";
 import { extractProfileFlags } from "./cli/profile-bootstrap";
 import {
-	AUTO_UPDATE_WORKER_ARG,
 	BLOB_BROKER_WORKER_ARG,
 	COMPUTER_WORKER_ARG,
 	DAEMON_BROKER_WORKER_ARG,
@@ -49,6 +47,7 @@ import {
 import type * as JsProcessEntry from "./eval/js/process-entry";
 import type { WorkerInbound as JsWorkerInbound, WorkerOutbound as JsWorkerOutbound } from "./eval/js/worker-protocol";
 import { startParentWatchdog } from "./subprocess/parent-watchdog";
+import { recordStartupNativeModules } from "./thread/code-skew";
 
 if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
 	process.stderr.write(
@@ -339,14 +338,6 @@ async function runWorkerEntrypoint(arg: string | undefined): Promise<boolean> {
 		await startTextPredictDaemonFromEnvironment();
 		return true;
 	}
-	if (arg === AUTO_UPDATE_WORKER_ARG) {
-		// Selector boundary keeps the updater graph out of ordinary startup. The worker
-		// downloads releases, so it needs the PI_PROXY handling ordinary commands get.
-		await installNetworkBootstrap();
-		const { runAutoUpdateWorker } = await import("./cli/auto-update");
-		await runAutoUpdateWorker();
-		return true;
-	}
 	return false;
 }
 
@@ -467,12 +458,6 @@ let runningCommand: string | undefined;
 
 /** Run the CLI with the given argv (no `process.argv` prefix). */
 export async function runCli(argv: string[]): Promise<void> {
-	// `omp zsh|bash|sh [args...]`: the whole argv belongs to the shell (`--help`,
-	// `--profile`, `-c` included), so it dispatches before profile bootstrap,
-	// prepaint, network setup and the command table.
-	if (isNativeShell(argv[0])) {
-		await runNativeShell(argv);
-	}
 	let resolvedArgv = argv;
 	try {
 		const extracted = extractProfileFlags(resolvedArgv);
@@ -561,7 +546,10 @@ export async function runCli(argv: string[]): Promise<void> {
 	// (issue #15586); OFD locks are not. Help and version open no store and load no addon.
 	// A failed install is reported once the launch has a warning sink (`main.ts`,
 	// `ensureSqliteLockShim`); this module stays free of pi-utils' env snapshot.
-	if (isProcessEntry && !helpOrVersion) installSqliteLockShim();
+	if (isProcessEntry && !helpOrVersion) {
+		installSqliteLockShim();
+		recordStartupNativeModules();
+	}
 	let stopStartupComposer: (() => void) | undefined;
 	if (
 		!process.env.PI_TIMING &&
